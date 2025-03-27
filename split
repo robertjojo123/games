@@ -1,0 +1,30 @@
+-- Redstone Signal Splitter - Receiver Computer
+-- Listens on back input and routes redstone based on signal strength
+
+local INPUT_SIDE = "back"
+local PULSE_DURATION = 0.6 -- Compatible with sticky pistons
+
+while true do
+    local signal = redstone.getAnalogInput(INPUT_SIDE)
+
+    -- Reset outputs
+    redstone.setOutput("left", false)
+    redstone.setOutput("front", false)
+    redstone.setOutput("right", false)
+
+    if signal == 1 then
+        redstone.setOutput("left", true)
+        sleep(PULSE_DURATION)
+        redstone.setOutput("left", false)
+    elseif signal == 2 then
+        redstone.setOutput("front", true)
+        sleep(PULSE_DURATION)
+        redstone.setOutput("front", false)
+    elseif signal == 3 then
+        redstone.setOutput("right", true)
+        sleep(PULSE_DURATION)
+        redstone.setOutput("right", false)
+    else
+        sleep(0.05)
+    end
+end
