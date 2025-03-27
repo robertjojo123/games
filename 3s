@@ -1,0 +1,111 @@
+-- Slot Machine - Final Version (Sticky Piston Friendly + Continuous Play)
+
+-- Redstone utility
+local function getInputStrength(side)
+    return redstone.getAnalogInput(side)
+end
+
+local function setOutputStrength(side, strength)
+    redstone.setAnalogOutput(side, strength)
+end
+
+-- Reel cycling with sticky piston support and clean final settle
+local function cycleReel(side, duration, finalStrength)
+    local start = os.clock()
+    while os.clock() - start < duration do
+        for strength = 3, 5 do
+            if strength ~= finalStrength then
+                setOutputStrength(side, strength)
+                sleep(0.6) -- Sticky piston on-time
+                setOutputStrength(side, 0)
+                sleep(0.2) -- Cooldown
+            end
+        end
+    end
+    -- Final chosen strength stays active
+    setOutputStrength(side, finalStrength)
+end
+
+-- Random number from 3 to 5
+local function randomStrength()
+    return 2 + math.random(3)
+end
+
+-- 85% chance front matches left
+local function decideFront(leftStrength)
+    if math.random(100) <= 85 then
+        return leftStrength
+    else
+        repeat
+            local alt = randomStrength()
+            if alt ~= leftStrength then return alt end
+        until false
+    end
+end
+
+-- 35% chance of 2x win if left=front (and not 5), 5% chance of 5x win if all = 5
+local function decideRight(left, front)
+    if left == front then
+        if left == 5 and math.random(100) <= 5 then
+            return 5
+        elseif left ~= 5 and math.random(100) <= 35 then
+            return left
+        end
+    end
+    repeat
+        local pick = randomStrength()
+        if pick ~= left or pick ~= front then return pick end
+    until false
+end
+
+-- Main loop
+while true do
+    -- Wait for top redstone input
+    while not redstone.getInput("top") do
+        sleep(0.1)
+    end
+
+    -- While top is ON, continuously run plays
+    while redstone.getInput("top") do
+        -- Read speed from back
+        local speed = getInputStrength("back")
+        local playTime = (speed == 15) and 6 or 15
+
+        -- Decide outcomes
+        local leftStrength = randomStrength()
+        local frontStrength = decideFront(leftStrength)
+        local rightStrength = decideRight(leftStrength, frontStrength)
+
+        -- Set cycle durations
+        local leftDuration = playTime / 3
+        local frontDuration = (2 * playTime) / 3
+        local rightDuration = playTime
+
+        -- Spin all reels at once
+        parallel.waitForAll(
+            function()
+                cycleReel("left", leftDuration, leftStrength)
+            end,
+            function()
+                cycleReel("front", frontDuration, frontStrength)
+            end,
+            function()
+                cycleReel("right", rightDuration, rightStrength)
+            end
+        )
+
+        -- Output results to terminal
+        print(string.format("L:%d F:%d R:%d", leftStrength, frontStrength, rightStrength))
+        if leftStrength == frontStrength and frontStrength == rightStrength then
+            if rightStrength == 5 then
+                print(">>> JACKPOT 5x WIN!")
+            else
+                print(">>> 2x WIN!")
+            end
+        else
+            print("No win.")
+        end
+
+        sleep(playTime)
+    end
+end
