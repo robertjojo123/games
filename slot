@@ -1,0 +1,96 @@
+-- Slot Machine - Clean Probabilistic Version
+
+-- Utility Functions
+local function getInputStrength(side)
+    return redstone.getAnalogInput(side)
+end
+
+local function setOutputStrength(side, strength)
+    redstone.setAnalogOutput(side, strength)
+end
+
+local function cycleReel(side, duration)
+    local start = os.clock()
+    while os.clock() - start < duration do
+        for strength = 3, 5 do
+            setOutputStrength(side, strength)
+            sleep(0.1)
+            setOutputStrength(side, 0)
+            sleep(0.1)
+        end
+    end
+end
+
+local function randomStrength()
+    return 2 + math.random(3) -- Random between 3, 4, 5
+end
+
+-- 85% chance to match left, 15% chance to pick a different one
+local function decideFront(leftStrength)
+    if math.random(100) <= 85 then
+        return leftStrength
+    else
+        repeat
+            local other = randomStrength()
+            if other ~= leftStrength then return other end
+        until false
+    end
+end
+
+-- Decide final right output based on front and left
+local function decideRight(left, front)
+    if left == front then
+        if left == 5 then
+            -- 5x win 5% of the time
+            if math.random(100) <= 5 then return 5 end
+        else
+            -- 2x win 35% of the time
+            if math.random(100) <= 35 then return left end
+        end
+    end
+
+    -- Otherwise, intentionally mismatch
+    repeat
+        local choice = randomStrength()
+        if choice ~= left or choice ~= front then return choice end
+    until false
+end
+
+-- Main Execution Loop
+while true do
+    while not redstone.getInput("top") do
+        sleep(0.1)
+    end
+
+    local speed = getInputStrength("back")
+    local playTime = (speed == 15) and 6 or 15
+
+    -- Left Reel
+    cycleReel("left", playTime / 3)
+    local left = randomStrength()
+    setOutputStrength("left", left)
+
+    -- Front Reel
+    cycleReel("front", (2 * playTime) / 3)
+    local front = decideFront(left)
+    setOutputStrength("front", front)
+
+    -- Right Reel
+    cycleReel("right", playTime)
+    local right = decideRight(left, front)
+    setOutputStrength("right", right)
+
+    -- Debug output (can be removed or redirected to monitor later)
+    print(string.format("L:%d F:%d R:%d", left, front, right))
+    if left == front and front == right then
+        if right == 5 then
+            print(">>> JACKPOT 5x WIN!")
+        else
+            print(">>> 2x WIN!")
+        end
+    else
+        print("No win.")
+    end
+
+    sleep(playTime)
+end
