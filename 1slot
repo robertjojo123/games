@@ -1,0 +1,103 @@
+-- Slot Machine - Final Version with Sticky Piston-Compatible Pulses
+
+-- Get redstone input strength
+local function getInputStrength(side)
+    return redstone.getAnalogInput(side)
+end
+
+-- Set redstone output strength
+local function setOutputStrength(side, strength)
+    redstone.setAnalogOutput(side, strength)
+end
+
+-- Reel cycling function with longer pulses for sticky pistons
+local function cycleReel(side, duration)
+    local start = os.clock()
+    while os.clock() - start < duration do
+        for strength = 3, 5 do
+            setOutputStrength(side, strength)
+            sleep(0.6) -- On-time for sticky piston
+            setOutputStrength(side, 0)
+            sleep(0.2) -- Off-time between pulses
+        end
+    end
+end
+
+local function randomStrength()
+    return 2 + math.random(3) -- 3, 4, or 5
+end
+
+-- Front reel matches left 85% of the time
+local function decideFront(leftStrength)
+    if math.random(100) <= 85 then
+        return leftStrength
+    else
+        repeat
+            local alt = randomStrength()
+            if alt ~= leftStrength then return alt end
+        until false
+    end
+end
+
+-- Right reel chooses based on match and probability
+local function decideRight(left, front)
+    if left == front then
+        if left == 5 and math.random(100) <= 5 then
+            return 5
+        elseif left ~= 5 and math.random(100) <= 35 then
+            return left
+        end
+    end
+    repeat
+        local pick = randomStrength()
+        if pick ~= left or pick ~= front then return pick end
+    until false
+end
+
+-- Main Game Loop
+while true do
+    while not redstone.getInput("top") do
+        sleep(0.1)
+    end
+
+    local speed = getInputStrength("back")
+    local playTime = (speed == 15) and 6 or 15
+
+    local leftStrength = randomStrength()
+    local frontStrength = decideFront(leftStrength)
+    local rightStrength = decideRight(leftStrength, frontStrength)
+
+    local leftDuration = playTime / 3
+    local frontDuration = (2 * playTime) / 3
+    local rightDuration = playTime
+
+    -- Run all reel cycles in parallel
+    parallel.waitForAll(
+        function()
+            cycleReel("left", leftDuration)
+            setOutputStrength("left", leftStrength)
+        end,
+        function()
+            cycleReel("front", frontDuration)
+            setOutputStrength("front", frontStrength)
+        end,
+        function()
+            cycleReel("right", rightDuration)
+            setOutputStrength("right", rightStrength)
+        end
+    )
+
+    -- Optional debug output
+    print(string.format("L:%d F:%d R:%d", leftStrength, frontStrength, rightStrength))
+    if leftStrength == frontStrength and frontStrength == rightStrength then
+        if rightStrength == 5 then
+            print(">>> JACKPOT 5x WIN!")
+        else
+            print(">>> 2x WIN!")
+        end
+    else
+        print("No win.")
+    end
+
+    sleep(playTime)
+end
