@@ -1,0 +1,116 @@
+-- Slot Machine - Final Version (Sticky Piston Safe + Pulse & Hold Friendly)
+
+-- Utility functions
+local function getInputStrength(side)
+    return redstone.getAnalogInput(side)
+end
+
+local function setOutputStrength(side, strength)
+    redstone.setAnalogOutput(side, strength)
+end
+
+-- Reel cycling function
+local function cycleReel(side, duration, finalStrength)
+    local start = os.clock()
+    while os.clock() - start < duration do
+        for strength = 3, 5 do
+            if strength ~= finalStrength then
+                setOutputStrength(side, strength)
+                sleep(0.6)
+                setOutputStrength(side, 0)
+                sleep(0.2)
+            end
+        end
+    end
+    -- Settle on final strength and leave it on
+    setOutputStrength(side, finalStrength)
+end
+
+-- Random number between 3 and 5
+local function randomStrength()
+    return 2 + math.random(3)
+end
+
+-- Front reel logic: 85% chance to match left
+local function decideFront(leftStrength)
+    if math.random(100) <= 85 then
+        return leftStrength
+    else
+        repeat
+            local alt = randomStrength()
+            if alt ~= leftStrength then return alt end
+        until false
+    end
+end
+
+-- Right reel win logic
+local function decideRight(left, front)
+    if left == front then
+        if left == 5 and math.random(100) <= 5 then
+            return 5
+        elseif left ~= 5 and math.random(100) <= 35 then
+            return left
+        end
+    end
+    repeat
+        local pick = randomStrength()
+        if pick ~= left or pick ~= front then return pick end
+    until false
+end
+
+-- Main Loop: Detect pulse or hold
+local wasInputOn = false
+
+while true do
+    local isInputOn = redstone.getInput("top")
+
+    if isInputOn and not wasInputOn then
+        -- Input just turned on → play once, and loop if held
+        repeat
+            -- Determine play speed
+            local speed = getInputStrength("back")
+            local playTime = (speed == 15) and 6 or 15
+
+            -- Choose outcomes
+            local leftStrength = randomStrength()
+            local frontStrength = decideFront(leftStrength)
+            local rightStrength = decideRight(leftStrength, frontStrength)
+
+            -- Cycle durations
+            local leftDuration = playTime / 3
+            local frontDuration = (2 * playTime) / 3
+            local rightDuration = playTime
+
+            -- Run all reels at once
+            parallel.waitForAll(
+                function()
+                    cycleReel("left", leftDuration, leftStrength)
+                end,
+                function()
+                    cycleReel("front", frontDuration, frontStrength)
+                end,
+                function()
+                    cycleReel("right", rightDuration, rightStrength)
+                end
+            )
+
+            -- Debug output
+            print(string.format("L:%d F:%d R:%d", leftStrength, frontStrength, rightStrength))
+            if leftStrength == frontStrength and frontStrength == rightStrength then
+                if rightStrength == 5 then
+                    print(">>> JACKPOT 5x WIN!")
+                else
+                    print(">>> 2x WIN!")
+                end
+            else
+                print("No win.")
+            end
+
+            sleep(playTime)
+            isInputOn = redstone.getInput("top")
+        until not isInputOn
+    end
+
+    wasInputOn = isInputOn
+    sleep(0.1)
+end
