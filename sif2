@@ -1,0 +1,77 @@
+-- Splitter Config 1: Input = front, Animated Outputs = top/back/right
+
+local INPUT = "front"
+local STRENGTH_TO_OUTPUT = {
+    [1] = "top",
+    [2] = "back",
+    [3] = "right",
+}
+local OUTPUT_ORDER = {"top", "back", "right"}
+local PULSE_TIME = 0.6
+local IDLE_TIME = 1.0
+
+local function clearAll()
+    redstone.setOutput("top", false)
+    redstone.setOutput("back", false)
+    redstone.setOutput("left", false)
+    redstone.setOutput("right", false)
+end
+
+local function animateCycle(untilStable, currentIndex)
+    local i = currentIndex or 1
+    local lastStrength = nil
+    local lastChange = os.clock()
+
+    while true do
+        local strength = redstone.getAnalogInput(INPUT)
+        if strength ~= lastStrength then
+            lastChange = os.clock()
+            lastStrength = strength
+        end
+
+        if os.clock() - lastChange > untilStable then
+            return strength, i
+        end
+
+        clearAll()
+        redstone.setOutput(OUTPUT_ORDER[i], true)
+        sleep(PULSE_TIME)
+        redstone.setOutput(OUTPUT_ORDER[i], false)
+        sleep(0.2)
+
+        i = (i % #OUTPUT_ORDER) + 1
+    end
+end
+
+local function alignToFinal(targetSide, startIndex)
+    local i = startIndex or 1
+    repeat
+        clearAll()
+        redstone.setOutput(OUTPUT_ORDER[i], true)
+        sleep(PULSE_TIME)
+        redstone.setOutput(OUTPUT_ORDER[i], false)
+        sleep(0.2)
+        i = (i % #OUTPUT_ORDER) + 1
+    until OUTPUT_ORDER[i] == targetSide
+
+    clearAll()
+    redstone.setOutput(targetSide, true)
+end
+
+while true do
+    local input = redstone.getAnalogInput(INPUT)
+    if input and STRENGTH_TO_OUTPUT[input] then
+        local finalStrength, lastIndex = animateCycle(IDLE_TIME)
+        local finalSide = STRENGTH_TO_OUTPUT[finalStrength]
+        if finalSide then
+            alignToFinal(finalSide, lastIndex)
+        end
+
+        repeat
+            sleep(0.05)
+            input = redstone.getAnalogInput(INPUT)
+        until input < 1
+        clearAll()
+    end
+    sleep(0.05)
+end
