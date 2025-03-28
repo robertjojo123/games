@@ -1,0 +1,31 @@
+-- Splitter Config 1 (corrected): Input = f, Outputs = top/back/right
+
+local INPUT = "f"
+local STRENGTH_TO_OUTPUT = {
+    [1] = "top",
+    [2] = "back",
+    [3] = "right", -- corrected
+}
+local PULSE_TIME = 0.6
+
+while true do
+    local strength = redstone.getAnalogInput(INPUT)
+
+    if strength and STRENGTH_TO_OUTPUT[strength] then
+        redstone.setOutput("top", false)
+        redstone.setOutput("left", false)
+        redstone.setOutput("right", false)
+        redstone.setOutput("back", false)
+
+        redstone.setOutput(STRENGTH_TO_OUTPUT[strength], true)
+        sleep(PULSE_TIME)
+        redstone.setOutput(STRENGTH_TO_OUTPUT[strength], false)
+
+        repeat
+            sleep(0.05)
+            strength = redstone.getAnalogInput(INPUT)
+        until strength < 1
+    end
+
+    sleep(0.05)
+end
