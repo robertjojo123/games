@@ -1,0 +1,69 @@
+-- Intelligent Redstone Splitter (final-pulse aware)
+
+local INPUT_SIDE = "back"
+local PULSE_TIME = 0.6
+local IDLE_THRESHOLD = 1.0 -- seconds of no signal change = final signal
+local CYCLE_PAUSE = 0.2
+local OUTPUT_SIDES = { [3] = "left", [4] = "front", [5] = "right" }
+
+-- Clears all output sides
+local function clearOutputs()
+    redstone.setOutput("left", false)
+    redstone.setOutput("front", false)
+    redstone.setOutput("right", false)
+end
+
+-- Animation cycle (skips repeating same output)
+local function cycleAnimation(untilStable)
+    local sides = {"left", "front", "right"}
+    local i = 1
+    local lastStrength = nil
+    local lastChangeTime = os.clock()
+
+    while true do
+        local currentStrength = redstone.getAnalogInput(INPUT_SIDE)
+
+        if currentStrength ~= lastStrength then
+            lastStrength = currentStrength
+            lastChangeTime = os.clock()
+        end
+
+        -- Exit if signal hasn't changed in defined idle time
+        if os.clock() - lastChangeTime > untilStable then
+            return currentStrength
+        end
+
+        -- Pulse next side in sequence
+        clearOutputs()
+        redstone.setOutput(sides[i], true)
+        sleep(PULSE_TIME)
+        redstone.setOutput(sides[i], false)
+        sleep(CYCLE_PAUSE)
+
+        i = (i % #sides) + 1
+    end
+end
+
+-- MAIN LOOP
+while true do
+    local inputStrength = redstone.getAnalogInput(INPUT_SIDE)
+
+    if inputStrength >= 3 and inputStrength <= 5 then
+        -- Start animation while waiting for final settle
+        local finalStrength = cycleAnimation(IDLE_THRESHOLD)
+
+        -- Clear and send final output
+        clearOutputs()
+        if OUTPUT_SIDES[finalStrength] then
+            redstone.setOutput(OUTPUT_SIDES[finalStrength], true)
+        end
+
+        -- Wait until the input is turned off again before restarting
+        repeat
+            sleep(0.1)
+            inputStrength = redstone.getAnalogInput(INPUT_SIDE)
+        until inputStrength < 3
+    end
+
+    sleep(0.05)
+end
