@@ -1,0 +1,77 @@
+-- Splitter Script: back input | 4=top, 5=front, 6=left
+
+local INPUT = "back"
+local STRENGTH_TO_OUTPUT = {
+    [4] = "top",
+    [5] = "front",
+    [6] = "left",
+}
+local OUTPUT_ORDER = {"top", "front", "left"}
+local IDLE_TIME = 1.0
+
+local function clearAll()
+    redstone.setOutput("top", false)
+    redstone.setOutput("left", false)
+    redstone.setOutput("right", false)
+    redstone.setOutput("back", false)
+    redstone.setOutput("front", false)
+end
+
+local function safePulse(side)
+    clearAll()
+    sleep(0.2)
+    redstone.setOutput(side, true)
+    sleep(0.6)
+    redstone.setOutput(side, false)
+    sleep(0.75)
+end
+
+local function animateCycle()
+    local lastStrength = nil
+    local lastChange = os.clock()
+    local i = 1
+
+    while true do
+        local strength = redstone.getAnalogInput(INPUT)
+        if strength ~= lastStrength then
+            lastStrength = strength
+            lastChange = os.clock()
+        end
+
+        if os.clock() - lastChange > IDLE_TIME then
+            return strength, i
+        end
+
+        safePulse(OUTPUT_ORDER[i])
+        i = (i % #OUTPUT_ORDER) + 1
+    end
+end
+
+local function alignToFinal(targetSide, startIndex)
+    local i = startIndex or 1
+    repeat
+        safePulse(OUTPUT_ORDER[i])
+        i = (i % #OUTPUT_ORDER) + 1
+    until OUTPUT_ORDER[i] == targetSide
+
+    clearAll()
+    redstone.setOutput(targetSide, true)
+end
+
+while true do
+    local input = redstone.getAnalogInput(INPUT)
+    if input and STRENGTH_TO_OUTPUT[input] then
+        local finalStrength, lastIndex = animateCycle()
+        local finalSide = STRENGTH_TO_OUTPUT[finalStrength]
+        if finalSide then
+            alignToFinal(finalSide, lastIndex)
+        end
+
+        repeat
+            sleep(0.05)
+            input = redstone.getAnalogInput(INPUT)
+        until input < 4
+        clearAll()
+    end
+    sleep(0.05)
+end
