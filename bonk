@@ -1,0 +1,62 @@
+-- Bank Computer Script (final with NBT filter and payouts)
+
+local modem = peripheral.wrap("bottom")
+modem.open(1)
+local ALLOWED_HASH_PREFIX = "f799573"
+
+local function sendMessage(msg)
+    modem.transmit(1, 1, msg)
+end
+
+local function receiveMessage()
+    while true do
+        local event, _, ch, _, msg = os.pullEvent("modem_message")
+        if ch == 1 then return msg end
+    end
+end
+
+local function transferValidBook(hopperSide, chestSide)
+    local hopper = peripheral.wrap(hopperSide)
+    local chest = peripheral.wrap(chestSide)
+    if not hopper or not chest then return false end
+
+    for slot, item in pairs(hopper.list()) do
+        if item.name == "minecraft:written_book" and item.nbtHash then
+            if string.sub(item.nbtHash, 1, #ALLOWED_HASH_PREFIX) == ALLOWED_HASH_PREFIX then
+                hopper.pushItems(peripheral.getName(chest), slot, 1)
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function dispenseItems(count)
+    local chest = peripheral.wrap("back")
+    local dropper = peripheral.wrap("left")
+    if not chest or not dropper then return end
+
+    for i = 1, count do
+        for slot, item in pairs(chest.list()) do
+            chest.pushItems(peripheral.getName(dropper), slot, 1)
+            break
+        end
+        redstone.setOutput("left", true)
+        sleep(0.4)
+        redstone.setOutput("left", false)
+        sleep(0.1)
+    end
+end
+
+while true do
+    local msg = receiveMessage()
+    if msg == "request_item" then
+        if transferValidBook("right", "back") then
+            sendMessage("item_transferred")
+        else
+            sendMessage("no_item")
+        end
+    elseif type(msg) == "table" and msg.type == "payout" then
+        dispenseItems(msg.amount or 0)
+    end
+end
