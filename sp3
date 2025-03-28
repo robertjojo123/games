@@ -1,0 +1,89 @@
+-- Intelligent Redstone Splitter with Final-Aligning Cycle
+
+local INPUT_SIDE = "back"
+local PULSE_TIME = 0.6
+local IDLE_THRESHOLD = 1.0 -- seconds without change = final value
+local CYCLE_PAUSE = 0.2
+
+local OUTPUT_ORDER = {"left", "front", "right"}
+local STRENGTH_TO_SIDE = { [3] = "left", [4] = "front", [5] = "right" }
+
+-- Clear all outputs
+local function clearOutputs()
+    redstone.setOutput("left", false)
+    redstone.setOutput("front", false)
+    redstone.setOutput("right", false)
+end
+
+-- Cycle outputs in order (left -> front -> right), skip duplicates
+local function cycleAnimation(untilStable, currentPos)
+    local i = currentPos or 1
+    local lastStrength = nil
+    local lastChange = os.clock()
+
+    while true do
+        local strength = redstone.getAnalogInput(INPUT_SIDE)
+
+        if strength ~= lastStrength then
+            lastStrength = strength
+            lastChange = os.clock()
+        end
+
+        if os.clock() - lastChange > untilStable then
+            return strength, i
+        end
+
+        -- Pulse current output
+        clearOutputs()
+        redstone.setOutput(OUTPUT_ORDER[i], true)
+        sleep(PULSE_TIME)
+        redstone.setOutput(OUTPUT_ORDER[i], false)
+        sleep(CYCLE_PAUSE)
+
+        i = (i % #OUTPUT_ORDER) + 1
+    end
+end
+
+-- Cycle through outputs once more to align with final strength
+local function alignToFinal(targetSide, startPos)
+    local i = startPos or 1
+
+    repeat
+        clearOutputs()
+        redstone.setOutput(OUTPUT_ORDER[i], true)
+        sleep(PULSE_TIME)
+        redstone.setOutput(OUTPUT_ORDER[i], false)
+        sleep(CYCLE_PAUSE)
+
+        i = (i % #OUTPUT_ORDER) + 1
+    until OUTPUT_ORDER[i] == targetSide
+
+    -- Final output stays on
+    clearOutputs()
+    redstone.setOutput(targetSide, true)
+end
+
+-- MAIN LOOP
+while true do
+    local strength = redstone.getAnalogInput(INPUT_SIDE)
+
+    if strength >= 3 and strength <= 5 then
+        -- Begin cycling and detect final strength
+        local finalStrength, lastIndex = cycleAnimation(IDLE_THRESHOLD)
+        local targetSide = STRENGTH_TO_SIDE[finalStrength]
+
+        if targetSide then
+            alignToFinal(targetSide, lastIndex)
+        end
+
+        -- Wait for input to reset
+        repeat
+            sleep(0.1)
+            strength = redstone.getAnalogInput(INPUT_SIDE)
+        until strength < 3
+
+        clearOutputs()
+    end
+
+    sleep(0.05)
+end
