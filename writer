@@ -1,0 +1,34 @@
+-- Auto Book Writer with dynamic author
+
+local chest = peripheral.find("inventory")
+local TITLE = "Slot Token"
+local CONTENT = {"Thank you for playing the slot machine!"}
+
+if not chest then
+    print("No writable inventory found.")
+    return
+end
+
+-- Wait for player
+print("Waiting for player...")
+local player
+while not player do
+    local event, name = os.pullEvent("player")
+    player = name
+end
+print("Detected player: " .. player)
+
+-- Find Book and Quill
+for slot, item in pairs(chest.list()) do
+    if item.name == "minecraft:writable_book" then
+        chest.setBook(slot, {
+            title = TITLE,
+            author = player,
+            pages = CONTENT
+        })
+        print("Book written by " .. player)
+        return
+    end
+end
+
+print("No writable book found.")
