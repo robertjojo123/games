@@ -1,0 +1,124 @@
+-- Bank Computer: Secure token validation & payout matching by name + title
+
+local modem = peripheral.wrap("bottom")
+modem.open(1)
+
+-- Valid NBT hash prefixes (first 6 characters)
+local VALID_PREFIXES = {
+    ["01cf97"] = true,
+    ["dd703d"] = true,
+    ["e61758"] = true,
+    ["1fafe1"] = true,
+    ["6d281b"] = true,
+}
+
+-- Track the last accepted token
+local lastToken = {
+    name = nil,
+    title = nil
+}
+
+local function sendMessage(msg)
+    modem.transmit(1, 1, msg)
+end
+
+local function receiveMessage()
+    while true do
+        local event, _, ch, _, msg = os.pullEvent("modem_message")
+        if ch == 1 then return msg end
+    end
+end
+
+-- Accept one valid token from the back chest and store its name + title
+local function transferSingleToken()
+    local input = peripheral.wrap("back")
+    local storage = peripheral.wrap("left")
+    if not input or not storage then return false end
+
+    for slot, item in pairs(input.list()) do
+        if item and item.nbtHash then
+            local prefix = string.sub(item.nbtHash, 1, 6)
+            if VALID_PREFIXES[prefix] then
+                input.pushItems(peripheral.getName(storage), slot, 1)
+                lastToken.name = item.name
+                if item.tag and item.tag.title then
+                    lastToken.title = item.tag.title
+                    print("✔️ Accepted book:", lastToken.title)
+                else
+                    lastToken.title = nil
+                    print("✔️ Accepted item:", lastToken.name)
+                end
+                return true
+            else
+                print("❌ Invalid token prefix:", prefix)
+            end
+        end
+    end
+
+    return false
+end
+
+-- Dispense N tokens that match stored name + (optional) title
+local function dispenseMatchingTokens(count)
+    if not lastToken.name then
+        print("❌ No token recorded for payout.")
+        return
+    end
+
+    local storage = peripheral.wrap("left")
+    local dropper = peripheral.wrap("top")
+    if not storage or not dropper then
+        print("❌ Chest or dropper not found.")
+        return
+    end
+
+    local dispensed = 0
+    local items = storage.list()
+
+    for slot, item in pairs(items) do
+        if dispensed >= count then break end
+
+        local match = item.name == lastToken.name
+
+        -- If the stored token had a title, enforce exact title match
+        if lastToken.title then
+            if item.tag and item.tag.title then
+                match = match and item.tag.title == lastToken.title
+            else
+                match = false
+            end
+        end
+
+        if match then
+            local toMove = math.min(item.count, count - dispensed)
+            storage.pushItems(peripheral.getName(dropper), slot, toMove)
+
+            for i = 1, toMove do
+                redstone.setOutput("top", true)
+                sleep(0.4)
+                redstone.setOutput("top", false)
+                sleep(0.1)
+            end
+
+            dispensed = dispensed + toMove
+        end
+    end
+
+    print("✅ Dispensed " .. dispensed .. "x of " .. (lastToken.title or lastToken.name))
+end
+
+-- Main program loop
+while true do
+    local msg = receiveMessage()
+
+    if msg == "request_item" then
+        if transferSingleToken() then
+            sendMessage("item_transferred")
+        else
+            sendMessage("no_item")
+        end
+
+    elseif type(msg) == "table" and msg.type == "payout" and type(msg.amount) == "number" then
+        dispenseMatchingTokens(msg.amount)
+    end
+end
