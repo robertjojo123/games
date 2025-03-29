@@ -1,0 +1,113 @@
+-- Final Receiver Script: Clean, Prefix-Matched Payouts, Signal Strength-Based
+
+local modem = peripheral.wrap("bottom")
+if not modem then error("❌ No modem on bottom") end
+rednet.open("bottom")
+
+local front = peripheral.wrap("front")
+local stock = peripheral.wrap("back")
+local dropper = peripheral.wrap("top")
+
+local VALID_TOKENS = {
+    ["01cf97"] = true,
+    ["dd703d"] = true,
+    ["e61758"] = true,
+    ["1fafe1"] = true,
+    ["6d281b"] = true,
+}
+
+-- Signal strength to payout multiplier
+local PAYOUT_MULTIPLIERS = {
+    [14] = 0,
+    [12] = 2,
+    [10] = 5,
+}
+
+local function pullOneToken()
+    for slot, item in pairs(front.list()) do
+        if item.nbtHash then
+            local prefix = string.sub(item.nbtHash, 1, 6)
+            if VALID_TOKENS[prefix] then
+                local moved = front.pushItems(peripheral.getName(stock), slot, 1)
+                if moved == 1 then
+                    print("✅ Pulled token with prefix:", prefix)
+                    return prefix
+                end
+            end
+        end
+    end
+    print("❌ No valid tokens found in input")
+    return nil
+end
+
+
+local function dispenseTokens(prefix, count)
+    local dispensed = 0
+    for slot, item in pairs(stock.list()) do
+        if item.nbtHash then
+            local hash = string.sub(item.nbtHash, 1, 6)
+            if hash == prefix then
+                local toMove = math.min(count - dispensed, item.count)
+                stock.pushItems(peripheral.getName(dropper), slot, toMove)
+
+                for i = 1, toMove do
+                    redstone.setOutput("top", true)
+                    sleep(0.2)
+                    redstone.setOutput("top", false)
+                    sleep(0.1)
+                end
+
+                dispensed = dispensed + toMove
+                if dispensed >= count then break end
+            end
+        end
+    end
+
+    if dispensed == 0 then
+        print("⚠️ No matching tokens found for prefix", prefix)
+    else
+        print("✅ Dispensed", dispensed, "token(s)")
+    end
+end
+
+print("🎯 Receiver ready. Press the button to play.")
+
+local lastTop = redstone.getInput("top")
+
+while true do
+    os.pullEvent("redstone")
+    local currentTop = redstone.getInput("top")
+
+    if not lastTop and currentTop then
+        local prefix = pullOneToken()
+        if prefix then
+            rednet.broadcast("start_plinko")
+            print("📡 Play started. Awaiting result...")
+
+            local result = nil
+            repeat
+                local left = redstone.getAnalogInput("left")
+                local right = redstone.getAnalogInput("right")
+                result = math.max(left, right)
+                sleep(0.05)
+            until result == 10 or result == 12 or result == 14
+
+            local multiplier = PAYOUT_MULTIPLIERS[result] or 0
+            print("🎲 Result:", result, "→ Multiplier:", multiplier .. "x")
+
+            if multiplier > 0 then
+                dispenseTokens(prefix, multiplier)
+            else
+                print("❌ No payout")
+            end
+
+            while redstone.getAnalogInput("left") > 0 or redstone.getAnalogInput("right") > 0 do
+                sleep(0.1)
+            end
+        else
+            print("❌ Invalid or missing token")
+        end
+    end
+
+    lastTop = currentTop
+end
