@@ -1,0 +1,91 @@
+-- Bank Computer Script with 5-token support + matching payout
+
+local modem = peripheral.wrap("bottom")
+modem.open(1)
+
+-- Token map: prefix → value
+local TOKEN_DATA = {
+    ["01cf976"] = {value = 500},
+    ["dd703d"] = {value = 1000},
+    ["e61758"] = {value = 5000},
+    ["1fafe1"] = {value = 10000},
+    ["6d281b"] = {value = 15000},
+}
+
+-- Will be set to the last deposited token prefix
+local lastTokenPrefix = nil
+
+local function sendMessage(msg)
+    modem.transmit(1, 1, msg)
+end
+
+local function receiveMessage()
+    while true do
+        local event, _, ch, _, msg = os.pullEvent("modem_message")
+        if ch == 1 then return msg end
+    end
+end
+
+-- Try to pull token from hopper into chest and record type
+local function transferValidToken(hopperSide, chestSide)
+    local hopper = peripheral.wrap(hopperSide)
+    local chest = peripheral.wrap(chestSide)
+    if not hopper or not chest then return false end
+
+    for slot, item in pairs(hopper.list()) do
+        if item.nbtHash then
+            for prefix, data in pairs(TOKEN_DATA) do
+                if string.sub(item.nbtHash, 1, #prefix) == prefix then
+                    hopper.pushItems(peripheral.getName(chest), slot, 1)
+                    lastTokenPrefix = prefix
+                    print("Token accepted: $" .. data.value)
+                    return true
+                end
+            end
+        end
+    end
+
+    return false
+end
+
+-- Dispense token(s) with matching NBT prefix
+local function dispenseMatchingToken()
+    if not lastTokenPrefix then
+        print("No known token to dispense!")
+        return
+    end
+
+    local chest = peripheral.wrap("back")
+    local dropper = peripheral.wrap("left")
+    if not chest or not dropper then return end
+
+    for slot, item in pairs(chest.list()) do
+        if item.nbtHash and string.sub(item.nbtHash, 1, #lastTokenPrefix) == lastTokenPrefix then
+            chest.pushItems(peripheral.getName(dropper), slot, 1)
+            redstone.setOutput("left", true)
+            sleep(0.4)
+            redstone.setOutput("left", false)
+            sleep(0.1)
+            print("Dispensed token: $" .. TOKEN_DATA[lastTokenPrefix].value)
+            return
+        end
+    end
+
+    print("No matching token found to dispense!")
+end
+
+-- Main loop
+while true do
+    local msg = receiveMessage()
+
+    if msg == "request_item" then
+        if transferValidToken("right", "back") then
+            sendMessage("item_transferred")
+        else
+            sendMessage("no_item")
+        end
+
+    elseif type(msg) == "table" and msg.type == "payout" then
+        dispenseMatchingToken()
+    end
+end
