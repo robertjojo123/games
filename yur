@@ -1,0 +1,157 @@
+-- Unified Plinko Script: Handles 'starter', 'splitter', or 'receiver'
+
+local label = os.getComputerLabel()
+if not label then
+    print("❌ Please label this computer as 'starter', 'splitter', or 'receiver'")
+    return
+end
+
+math.randomseed(os.time())
+
+local function pulse(side)
+    redstone.setOutput(side, true)
+    sleep(0.2)
+    redstone.setOutput(side, false)
+end
+
+local function randomSide()
+    return math.random(2) == 1 and "left" or "right"
+end
+
+-- STARTER NODE
+if label == "starter" then
+    local modem = peripheral.find("modem", rednet.open)
+    if not modem then error("❌ No wireless modem found!") end
+
+    print("🎮 Starter ready. Waiting for wireless signal...")
+
+    while true do
+        local _, msg = rednet.receive()
+        if msg == "start_plinko" then
+            local dir = randomSide()
+            print("🎯 Sending redstone to:", dir)
+            pulse(dir)
+        end
+    end
+
+-- SPLITTER NODE
+elseif label == "splitter" then
+    print("🔀 Splitter ready. Listening for redstone from top...")
+
+    while true do
+        if redstone.getInput("top") then
+            local dir = randomSide()
+            print("↪️ Splitting to:", dir)
+            pulse(dir)
+            while redstone.getInput("top") do sleep(0.05) end
+        end
+        sleep(0.05)
+    end
+
+-- RECEIVER NODE
+elseif label == "receiver" then
+    local modem = peripheral.wrap("bottom")
+    if not modem then error("❌ No modem found on bottom") end
+    rednet.open("bottom")
+
+    local front = peripheral.wrap("front")
+    local stock = peripheral.wrap("back")
+    local dropper = peripheral.wrap("top")
+
+    local VALID_TOKENS = {
+        ["01cf97"] = {value = 500},
+        ["dd703d"] = {value = 1000},
+        ["e61758"] = {value = 5000},
+        ["1fafe1"] = {value = 10000},
+        ["6d281b"] = {value = 15000},
+    }
+
+    local PAYOUT_MULTIPLIERS = {
+        [1] = 5,  -- outer
+        [2] = 2,  -- inner
+        [3] = 0,  -- middle
+        [4] = 0,
+        [5] = 2,
+        [6] = 5
+    }
+
+    local function pullOneToken()
+        local item = front.getItemDetail(1)
+        if item and item.nbtHash then
+            local prefix = string.sub(item.nbtHash, 1, 6)
+            if VALID_TOKENS[prefix] then
+                local moved = front.pushItems(peripheral.getName(stock), 1, 1)
+                if moved == 1 then
+                    print("✅ Accepted valid token: " .. prefix)
+                    return item.name, prefix
+                else
+                    print("⚠️ Failed to transfer token")
+                end
+            else
+                print("❌ Invalid token prefix: " .. (item.nbtHash or "none"))
+            end
+        else
+            print("❌ No valid item in slot 1")
+        end
+        return nil
+    end
+
+    local function dispenseTokens(name, prefix, count)
+        local dispensed = 0
+        for slot, item in pairs(stock.list()) do
+            if item.name == name and item.nbtHash then
+                local hash = string.sub(item.nbtHash, 1, 6)
+                if hash == prefix then
+                    local toMove = math.min(count - dispensed, item.count)
+                    stock.pushItems(peripheral.getName(dropper), slot, toMove)
+                    for i = 1, toMove do
+                        redstone.setOutput("top", true)
+                        sleep(0.2)
+                        redstone.setOutput("top", false)
+                        sleep(0.1)
+                    end
+                    dispensed = dispensed + toMove
+                    if dispensed >= count then break end
+                end
+            end
+        end
+    end
+
+    while true do
+        print("🕹️  Waiting for button press...")
+        repeat
+            os.pullEvent("redstone")
+        until redstone.getInput("top")
+
+        local name, prefix = pullOneToken()
+        if name then
+            print("📡 Sending start to starter...")
+            rednet.broadcast("start_plinko")
+
+            local result = nil
+            repeat
+                local left = redstone.getAnalogInput("left")
+                local right = redstone.getAnalogInput("right")
+                result = math.max(left, right)
+                sleep(0.05)
+            until result >= 1 and result <= 6
+
+            local multiplier = PAYOUT_MULTIPLIERS[result] or 0
+            print("🎲 Result zone:", result, "→ Multiplier:", multiplier .. "x")
+
+            if multiplier > 0 then
+                dispenseTokens(name, prefix, multiplier)
+            else
+                print("❌ No payout")
+            end
+
+            while redstone.getAnalogInput("left") > 0 or redstone.getAnalogInput("right") > 0 do
+                sleep(0.1)
+            end
+        end
+        sleep(0.1)
+    end
+
+else
+    print("❌ Unknown label. Use 'starter', 'splitter', or 'receiver'")
+end
