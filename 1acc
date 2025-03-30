@@ -1,0 +1,184 @@
+-- Stable Multi-Threaded Account System with Radar + Rednet
+
+-- === Peripheral Setup ===
+local shulkerBox = peripheral.wrap("front")
+local stockChest = peripheral.wrap("left")
+local monitor = peripheral.wrap("top")
+local radar = peripheral.wrap("right")
+local modem = peripheral.wrap("bottom")
+
+if not modem then error("❌ No wireless modem on bottom") end
+rednet.open("bottom")
+
+-- === Create Accounts Folder if Missing ===
+if not fs.exists("/accounts") then
+    fs.makeDir("/accounts")
+end
+
+-- === Token Prefix Values ===
+local VALID_ITEMS = {
+    ["01cf97"] = 500,
+    ["dd703d"] = 1000,
+    ["e61758"] = 5000,
+    ["1fafe1"] = 10000,
+    ["6d281b"] = 15000,
+}
+
+-- === Shared Player State ===
+local activePlayer = nil
+local playerDistance = nil
+
+-- === Monitor Helpers ===
+monitor.setTextScale(1)
+local function center(text)
+    local w, _ = monitor.getSize()
+    return math.floor((w - #text) / 2) + 1
+end
+
+local function displayCenteredText(y, text)
+    monitor.setCursorPos(center(text), y)
+    monitor.write(text)
+end
+
+local function drawWelcomeScreen()
+    monitor.clear()
+    displayCenteredText(2, "Please stand on the")
+    displayCenteredText(3, "block to access account")
+end
+
+-- === Balance Handling ===
+local function getPlayerFile(player)
+    return "/accounts/" .. player .. ".txt"
+end
+
+local function getPlayerBalance(player)
+    local filePath = getPlayerFile(player)
+    if fs.exists(filePath) then
+        local f = fs.open(filePath, "r")
+        local val = tonumber(f.readAll())
+        f.close()
+        return val or 0
+    else
+        return 0
+    end
+end
+
+local function setPlayerBalance(player, amount)
+    local filePath = getPlayerFile(player)
+    local f = fs.open(filePath, "w")
+    f.write(tostring(amount))
+    f.close()
+end
+
+-- === Deposit Logic ===
+local function processDeposit(player)
+    local total = 0
+    for slot, item in pairs(shulkerBox.list()) do
+        if item.nbtHash then
+            local prefix = string.sub(item.nbtHash, 1, 6)
+            local value = VALID_ITEMS[prefix]
+            if value then
+                local moved = shulkerBox.pushItems(peripheral.getName(stockChest), slot, item.count)
+                total = total + (moved * value)
+            end
+        end
+    end
+
+    if total > 0 then
+        local oldBal = getPlayerBalance(player)
+        local newBal = oldBal + total
+        setPlayerBalance(player, newBal)
+        return newBal, "✅ Items deposited!"
+    else
+        return getPlayerBalance(player), "⚠️ No valid tokens."
+    end
+end
+
+-- === UI Drawing ===
+local function drawAccountScreen(player, balance, distance, message)
+    monitor.clear()
+    displayCenteredText(2, "Welcome, " .. player)
+    displayCenteredText(3, "Balance: $" .. balance)
+    displayCenteredText(4, "Distance: " .. tostring(distance) .. " blocks")
+    displayCenteredText(6, "[ Deposit ]")
+    if message then
+        displayCenteredText(8, message)
+    end
+end
+
+-- === Thread: Monitor Display ===
+local function monitorDisplay()
+    local lastPlayer = nil
+    local balance = 0
+    local message = ""
+
+    while true do
+        if not activePlayer then
+            if lastPlayer ~= nil then
+                drawWelcomeScreen()
+                lastPlayer = nil
+            end
+            sleep(0.1)
+        else
+            if activePlayer ~= lastPlayer then
+                balance = getPlayerBalance(activePlayer)
+                message = ""
+                lastPlayer = activePlayer
+            end
+
+            drawAccountScreen(activePlayer, balance, playerDistance, message)
+
+            local event = { os.pullEventTimeout("monitor_touch", 0.1) }
+            if event[1] == "monitor_touch" then
+                local _, _, x, y = table.unpack(event)
+                local btnX = center("[ Deposit ]")
+                if y == 6 and x >= btnX and x <= btnX + 9 then
+                    balance, message = processDeposit(activePlayer)
+                end
+            end
+        end
+    end
+end
+
+-- === Thread: Radar Tracker ===
+local function radarTracker()
+    while true do
+        local players = radar.getPlayers()
+        local closest = nil
+        for _, p in ipairs(players) do
+            if p.distance >= 1 and p.distance <= 3 then
+                if not closest or p.distance < closest.distance then
+                    closest = p
+                end
+            end
+        end
+
+        if closest then
+            activePlayer = closest.name
+            playerDistance = closest.distance
+        else
+            activePlayer = nil
+            playerDistance = nil
+        end
+
+        sleep(0.1)
+    end
+end
+
+-- === Thread: Rednet Listener ===
+local function listenForBalanceRequests()
+    while true do
+        local sender, msg = rednet.receive()
+        if type(msg) == "table" and msg.action == "get_balance" and msg.player then
+            local bal = getPlayerBalance(msg.player)
+            rednet.send(sender, {player = msg.player, balance = bal})
+        end
+    end
+end
+
+-- === Start All Threads ===
+parallel.waitForAny(
+    monitorDisplay,
+    radarTracker,
+    listenForBalanceRequests
+)
