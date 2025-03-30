@@ -1,0 +1,148 @@
+-- Account Computer with Radar + Deposit + Rednet Transfer Support
+
+-- === Peripheral Setup ===
+local shulkerBox = peripheral.wrap("front")
+local stockChest = peripheral.wrap("left")
+local monitor = peripheral.wrap("top")
+local radar = peripheral.wrap("right")
+local modem = peripheral.wrap("bottom")
+if not modem then error("❌ No modem on bottom") end
+rednet.open("bottom")
+
+if not fs.exists("/accounts") then fs.makeDir("/accounts") end
+
+local VALID_ITEMS = {
+    ["01cf97"] = 500,
+    ["dd703d"] = 1000,
+    ["e61758"] = 5000,
+    ["1fafe1"] = 10000,
+    ["6d281b"] = 15000,
+}
+
+-- === Helpers ===
+local function getPlayerFile(player)
+    return "/accounts/" .. player .. ".txt"
+end
+
+local function getBalance(player)
+    local path = getPlayerFile(player)
+    if fs.exists(path) then
+        local f = fs.open(path, "r")
+        local val = tonumber(f.readAll())
+        f.close()
+        return val or 0
+    end
+    return 0
+end
+
+local function setBalance(player, amount)
+    local f = fs.open(getPlayerFile(player), "w")
+    f.write(tostring(amount))
+    f.close()
+end
+
+-- === Deposit Logic ===
+local function processDeposit(player)
+    local total = 0
+    for slot, item in pairs(shulkerBox.list()) do
+        if item.nbtHash then
+            local prefix = string.sub(item.nbtHash, 1, 6)
+            local value = VALID_ITEMS[prefix]
+            if value then
+                local moved = shulkerBox.pushItems(peripheral.getName(stockChest), slot, item.count)
+                total = total + (moved * value)
+            end
+        end
+    end
+    if total > 0 then
+        local newBal = getBalance(player) + total
+        setBalance(player, newBal)
+        return newBal, "✅ Deposited!"
+    end
+    return getBalance(player), "⚠️ No valid tokens."
+end
+
+-- === Radar Tracker + UI ===
+local activePlayer = nil
+local balance, distance, message = 0, nil, ""
+
+local function radarLoop()
+    while true do
+        local players = radar.getPlayers()
+        local closest = nil
+        for _, p in ipairs(players) do
+            if p.distance >= 1 and p.distance <= 3 then
+                if not closest or p.distance < closest.distance then
+                    closest = p
+                end
+            end
+        end
+        if closest then
+            activePlayer = closest.name
+            distance = closest.distance
+            balance = getBalance(activePlayer)
+        else
+            activePlayer, distance = nil, nil
+        end
+        sleep(0.2)
+    end
+end
+
+-- === Display Screen ===
+local function displayLoop()
+    monitor.setTextScale(1)
+    while true do
+        monitor.clear()
+        if activePlayer then
+            monitor.setCursorPos(2, 2)
+            monitor.write("Welcome, " .. activePlayer)
+            monitor.setCursorPos(2, 3)
+            monitor.write("Balance: $" .. balance)
+            monitor.setCursorPos(2, 5)
+            monitor.write("[ Deposit ]")
+            if message then
+                monitor.setCursorPos(2, 7)
+                monitor.write(message)
+            end
+        else
+            monitor.setCursorPos(2, 2)
+            monitor.write("Please stand on the block...")
+        end
+        sleep(0.1)
+    end
+end
+
+-- === Touch Events ===
+local function touchLoop()
+    while true do
+        local _, _, x, y = os.pullEvent("monitor_touch")
+        if activePlayer and y == 5 then
+            balance, message = processDeposit(activePlayer)
+        end
+    end
+end
+
+-- === Rednet Listener ===
+local function rednetListener()
+    while true do
+        local sender, msg = rednet.receive()
+        if type(msg) == "table" and msg.player then
+            if msg.action == "get_balance" then
+                rednet.send(sender, {player = msg.player, balance = getBalance(msg.player)})
+            elseif msg.action == "transfer" and type(msg.delta) == "number" then
+                local old = getBalance(msg.player)
+                local new = math.max(0, old + msg.delta)
+                setBalance(msg.player, new)
+                rednet.send(sender, {player = msg.player, balance = new})
+            end
+        end
+    end
+end
+
+-- === Run All ===
+parallel.waitForAny(
+    radarLoop,
+    displayLoop,
+    touchLoop,
+    rednetListener
+)
