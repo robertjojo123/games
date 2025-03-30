@@ -1,0 +1,147 @@
+-- Account System with Computronics Radar & Deposit Functionality
+
+-- === Peripheral Setup ===
+local shulkerBox = peripheral.wrap("front")
+local stockChest = peripheral.wrap("left")
+local monitor = peripheral.wrap("top")
+local radar = peripheral.wrap("right")
+local modem = peripheral.wrap("bottom")
+
+if not modem then error("❌ No wireless modem on bottom") end
+rednet.open("bottom")
+
+-- === Auto-create accounts directory ===
+if not fs.exists("/accounts") then
+    fs.makeDir("/accounts")
+end
+
+-- === Token Prefixes and Values ===
+local VALID_ITEMS = {
+    ["01cf97"] = 500,
+    ["dd703d"] = 1000,
+    ["e61758"] = 5000,
+    ["1fafe1"] = 10000,
+    ["6d281b"] = 15000,
+}
+
+-- === Monitor Helpers ===
+monitor.setTextScale(1)
+local function center(text)
+    local w, _ = monitor.getSize()
+    return math.floor((w - #text) / 2) + 1
+end
+
+local function displayCenteredText(y, text)
+    monitor.setCursorPos(center(text), y)
+    monitor.write(text)
+end
+
+local function drawWelcomeScreen()
+    monitor.clear()
+    displayCenteredText(2, "Please stand on the")
+    displayCenteredText(3, "block to access account")
+end
+
+-- === Balance Handling ===
+local function getPlayerFile(player)
+    return "/accounts/" .. player .. ".txt"
+end
+
+local function getPlayerBalance(player)
+    local filePath = getPlayerFile(player)
+    if fs.exists(filePath) then
+        local f = fs.open(filePath, "r")
+        local val = tonumber(f.readAll())
+        f.close()
+        return val or 0
+    else
+        return 0
+    end
+end
+
+local function setPlayerBalance(player, amount)
+    local filePath = getPlayerFile(player)
+    local f = fs.open(filePath, "w")
+    f.write(tostring(amount))
+    f.close()
+end
+
+-- === Display Account UI ===
+local function drawAccountScreen(player, balance)
+    monitor.clear()
+    displayCenteredText(2, "Welcome, " .. player)
+    displayCenteredText(4, "Balance: $" .. balance)
+    displayCenteredText(6, "[ Deposit ]")
+end
+
+-- === Deposit Logic ===
+local function processDeposit(player)
+    local total = 0
+    for slot, item in pairs(shulkerBox.list()) do
+        if item.nbtHash then
+            local prefix = string.sub(item.nbtHash, 1, 6)
+            local value = VALID_ITEMS[prefix]
+            if value then
+                local moved = shulkerBox.pushItems(peripheral.getName(stockChest), slot, item.count)
+                total = total + (moved * value)
+            end
+        end
+    end
+
+    if total > 0 then
+        local oldBal = getPlayerBalance(player)
+        local newBal = oldBal + total
+        setPlayerBalance(player, newBal)
+        drawAccountScreen(player, newBal)
+        displayCenteredText(8, "Items deposited!")
+    else
+        displayCenteredText(8, "No valid tokens.")
+    end
+end
+
+-- === Touch Event Handling ===
+local function handleTouch(player)
+    while true do
+        local _, _, x, y = os.pullEvent("monitor_touch")
+        local w, _ = monitor.getSize()
+        local btnX = center("[ Deposit ]")
+        if y == 6 and x >= btnX and x <= btnX + 9 then
+            processDeposit(player)
+        end
+    end
+end
+
+-- === Player Radar Detection ===
+local function detectNearbyPlayer()
+    while true do
+        local players = radar.getPlayers()
+        for _, p in ipairs(players) do
+            if p.distance == 3 then
+                return p.name
+            end
+        end
+        sleep(0.5)
+    end
+end
+
+-- === Rednet Listener for Balance Requests ===
+local function listenForBalanceRequests()
+    while true do
+        local sender, msg = rednet.receive()
+        if type(msg) == "table" and msg.action == "get_balance" and msg.player then
+            local bal = getPlayerBalance(msg.player)
+            rednet.send(sender, {player = msg.player, balance = bal})
+        end
+    end
+end
+
+-- === Main Execution ===
+parallel.waitForAny(function()
+    while true do
+        drawWelcomeScreen()
+        local player = detectNearbyPlayer()
+        local balance = getPlayerBalance(player)
+        drawAccountScreen(player, balance)
+        handleTouch(player)
+    end
+end, listenForBalanceRequests)
