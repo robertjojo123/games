@@ -1,0 +1,165 @@
+-- Final Account System: Dynamic Distance, Radar Tracking, Deposit Button
+
+-- === Peripheral Setup ===
+local shulkerBox = peripheral.wrap("front")
+local stockChest = peripheral.wrap("left")
+local monitor = peripheral.wrap("top")
+local radar = peripheral.wrap("right")
+local modem = peripheral.wrap("bottom")
+
+if not modem then error("❌ No wireless modem on bottom") end
+rednet.open("bottom")
+
+-- === Create Accounts Folder if Missing ===
+if not fs.exists("/accounts") then
+    fs.makeDir("/accounts")
+end
+
+-- === Token Prefix Values ===
+local VALID_ITEMS = {
+    ["01cf97"] = 500,
+    ["dd703d"] = 1000,
+    ["e61758"] = 5000,
+    ["1fafe1"] = 10000,
+    ["6d281b"] = 15000,
+}
+
+-- === Monitor Helpers ===
+monitor.setTextScale(1)
+local function center(text)
+    local w, _ = monitor.getSize()
+    return math.floor((w - #text) / 2) + 1
+end
+
+local function displayCenteredText(y, text)
+    monitor.setCursorPos(center(text), y)
+    monitor.write(text)
+end
+
+local function drawWelcomeScreen()
+    monitor.clear()
+    displayCenteredText(2, "Please stand on the")
+    displayCenteredText(3, "block to access account")
+end
+
+-- === Balance Handling ===
+local function getPlayerFile(player)
+    return "/accounts/" .. player .. ".txt"
+end
+
+local function getPlayerBalance(player)
+    local filePath = getPlayerFile(player)
+    if fs.exists(filePath) then
+        local f = fs.open(filePath, "r")
+        local val = tonumber(f.readAll())
+        f.close()
+        return val or 0
+    else
+        return 0
+    end
+end
+
+local function setPlayerBalance(player, amount)
+    local filePath = getPlayerFile(player)
+    local f = fs.open(filePath, "w")
+    f.write(tostring(amount))
+    f.close()
+end
+
+-- === UI Drawing ===
+local function drawAccountScreen(player, balance, distance, message)
+    monitor.clear()
+    displayCenteredText(2, "Welcome, " .. player)
+    displayCenteredText(3, "Balance: $" .. balance)
+    displayCenteredText(4, "Distance: " .. tostring(distance) .. " blocks")
+    displayCenteredText(6, "[ Deposit ]")
+    if message then
+        displayCenteredText(8, message)
+    end
+end
+
+-- === Deposit Logic ===
+local function processDeposit(player)
+    local total = 0
+    for slot, item in pairs(shulkerBox.list()) do
+        if item.nbtHash then
+            local prefix = string.sub(item.nbtHash, 1, 6)
+            local value = VALID_ITEMS[prefix]
+            if value then
+                local moved = shulkerBox.pushItems(peripheral.getName(stockChest), slot, item.count)
+                total = total + (moved * value)
+            end
+        end
+    end
+
+    if total > 0 then
+        local oldBal = getPlayerBalance(player)
+        local newBal = oldBal + total
+        setPlayerBalance(player, newBal)
+        return newBal, "✅ Items deposited!"
+    else
+        return getPlayerBalance(player), "⚠️ No valid tokens."
+    end
+end
+
+-- === Rednet Balance Responder ===
+local function listenForBalanceRequests()
+    while true do
+        local sender, msg = rednet.receive()
+        if type(msg) == "table" and msg.action == "get_balance" and msg.player then
+            local bal = getPlayerBalance(msg.player)
+            rednet.send(sender, {player = msg.player, balance = bal})
+        end
+    end
+end
+
+-- === Find the closest player in range 1–3 ===
+local function findNearbyPlayer()
+    local players = radar.getPlayers()
+    for _, p in ipairs(players) do
+        if p.distance >= 1 and p.distance <= 3 then
+            return p.name, p.distance
+        end
+    end
+    return nil
+end
+
+-- === Main UI Loop ===
+local function monitorPlayer()
+    while true do
+        drawWelcomeScreen()
+
+        -- Wait for someone to get close
+        local playerName, distance
+        repeat
+            playerName, distance = findNearbyPlayer()
+            sleep(0.2)
+        until playerName
+
+        -- Enter interactive session
+        local balance = getPlayerBalance(playerName)
+        local message = ""
+
+        while true do
+            local updatedPlayer, newDist = findNearbyPlayer()
+
+            -- If player left or new player replaced them, exit
+            if updatedPlayer ~= playerName then break end
+
+            drawAccountScreen(playerName, balance, newDist, message)
+
+            -- Wait for either redstone, update, or click
+            local event = { os.pullEventTimeout("monitor_touch", 0.2) }
+            if event[1] == "monitor_touch" then
+                local _, _, x, y = unpack(event)
+                local btnX = center("[ Deposit ]")
+                if y == 6 and x >= btnX and x <= btnX + 9 then
+                    balance, message = processDeposit(playerName)
+                end
+            end
+        end
+    end
+end
+
+-- === Run radar + rednet in parallel ===
+parallel.waitForAny(monitorPlayer, listenForBalanceRequests)
