@@ -1,0 +1,437 @@
+-- Roulette Betting Terminal - Final Version with Color-Corrected Palette
+--Winning Logic
+-- === Winning Logic ===
+local redNumbers = {
+  ["1"]=true, ["3"]=true, ["5"]=true, ["7"]=true, ["9"]=true,
+  ["12"]=true, ["14"]=true, ["16"]=true, ["18"]=true,
+  ["19"]=true, ["21"]=true, ["23"]=true, ["25"]=true,
+  ["27"]=true, ["30"]=true, ["32"]=true, ["34"]=true, ["36"]=true
+}
+
+local function isDozen(betZone, result)
+  local n = tonumber(result)
+  if not n then return false end
+  if betZone == "1st12" then return n >= 1 and n <= 12 end
+  if betZone == "2nd12" then return n >= 13 and n <= 24 end
+  if betZone == "3rd12" then return n >= 25 and n <= 36 end
+  return false
+end
+
+local function isColumn(betZone, result)
+  local n = tonumber(result)
+  if not n then return false end
+  if betZone == "2to1_top" then return n % 3 == 0 end
+  if betZone == "2to1_mid" then return n % 3 == 2 end
+  if betZone == "2to1_bot" then return n % 3 == 1 end
+  return false
+end
+
+local function isExtra(betZone, result)
+  local n = tonumber(result)
+  if not n then return false end
+  if betZone == "1to18" then return n >= 1 and n <= 18 end
+  if betZone == "19to36" then return n >= 19 and n <= 36 end
+  if betZone == "even" then return n % 2 == 0 end
+  if betZone == "odd" then return n % 2 == 1 end
+  return false
+end
+
+local function isColor(betZone, result)
+  if (betZone == "red" and redNumbers[result]) then return true end
+  if (betZone == "black" and not redNumbers[result] and result ~= "0" and result ~= "00") then return true end
+  return false
+end
+
+
+
+-- === Peripherals ===
+local monitor = peripheral.wrap("top")
+local radar = peripheral.wrap("right")
+local modem = peripheral.wrap("bottom")
+rednet.open("bottom")
+
+-- === Config ===
+local ACCOUNT_COMPUTER_ID = 8045
+local BET_AMOUNTS = {500, 1000, 5000, 10000, 15000}
+local MIN_DISTANCE, MAX_DISTANCE = 1, 3
+
+-- === Hitbox Data ===
+local monitorHitboxes = dofile("roulette_hitboxes.lua")
+
+-- === Globals ===
+local activePlayer = nil
+local playerBalance = 0
+local placingMode = false
+local betAmount = nil
+local message = ""
+local placedBets = {} -- zoneName -> amount
+local selectedChip = nil
+
+-- === Load NFV Frame ===
+local function loadNFV(path)
+    local file = fs.open(path, "r")
+    local width, height = file.readLine():match("(%d+)%s+(%d+)")
+    local lines = {}
+    for i = 1, tonumber(height) do
+        table.insert(lines, file.readLine() or "")
+    end
+    file.close()
+    return lines
+end
+
+-- === FINAL COLOR PALETTE (Roulette-Corrected) ===
+local COLOR_MAP = {
+    f = colors.black,
+    e = colors.green,
+    d = colors.red,
+    c = colors.red,
+    b = colors.black,
+    a = colors.black,
+    [9] = colors.red,
+    [8] = colors.black,
+    [7] = colors.black,
+    [3] = colors.white
+}
+
+local function drawPixel(x, y, color)
+    monitor.setCursorPos(x, y)
+    monitor.setBackgroundColor(color)
+    monitor.write(" ")
+end
+
+local function drawBackground(lines)
+    monitor.clear()
+    for y, row in ipairs(lines) do
+        for x = 1, math.min(#row, 57) do
+            local ch = row:sub(x, x):lower()
+            local color = COLOR_MAP[ch] or colors.white
+            drawPixel(x, y, color)
+        end
+    end
+end
+
+-- === Overlay UI ===
+local function drawOverlay(balance, message)
+    monitor.setCursorPos(2, 37)
+    monitor.setBackgroundColor(colors.green)
+    monitor.setTextColor(colors.yellow)
+    monitor.write("Balance: $" .. balance)
+
+    if message and message ~= "" then
+        monitor.setCursorPos(2, 36)
+        monitor.setTextColor(colors.orange)
+        monitor.write(message)
+
+         --zeros
+        monitor.setCursorPos(4, 9)
+        monitor.blit("0", "0", "d")
+        monitor.setCursorPos(4, 21)
+        monitor.blit("00", "00", "dd")
+        --first row
+        monitor.setCursorPos(7, 7) 
+        monitor.blit("3", "0", "e")
+        monitor.setCursorPos(7, 15) 
+        monitor.blit("2", "0", "f")
+        monitor.setCursorPos(7, 22) 
+        monitor.blit("1", "0", "e")
+        --second
+        monitor.setCursorPos(11, 7) 
+        monitor.blit("6", "0", "f")
+        monitor.setCursorPos(11, 15) 
+        monitor.blit("5", "0", "e")
+        monitor.setCursorPos(11, 22) 
+        monitor.blit("4", "0", "f")
+        --third
+        monitor.setCursorPos(15, 7) 
+        monitor.blit("9", "0", "e")
+        monitor.setCursorPos(15, 15) 
+        monitor.blit("8", "0", "f")
+        monitor.setCursorPos(15, 22) 
+        monitor.blit("7", "0", "e")
+        --fourth
+        monitor.setCursorPos(19, 7) 
+        monitor.blit("12", "00", "ee")
+        monitor.setCursorPos(19, 15) 
+        monitor.blit("11", "00", "ff")
+        monitor.setCursorPos(19, 22) 
+        monitor.blit("10", "00", "ff")
+        --fifth
+        monitor.setCursorPos(22, 7) 
+        monitor.blit("15", "00", "ff")
+        monitor.setCursorPos(22, 15) 
+        monitor.blit("14", "00", "ee")
+        monitor.setCursorPos(22, 22) 
+        monitor.blit("13", "00", "ff")
+        --sixth
+        monitor.setCursorPos(26, 7) 
+        monitor.blit("18", "00", "ee")
+        monitor.setCursorPos(26, 15) 
+        monitor.blit("17", "00", "ff")
+        monitor.setCursorPos(26, 22) 
+        monitor.blit("16", "00", "ee")
+        --seventh
+        monitor.setCursorPos(30, 7) 
+        monitor.blit("21", "00", "ee")
+        monitor.setCursorPos(30, 15) 
+        monitor.blit("20", "00", "ff")
+        monitor.setCursorPos(30, 22) 
+        monitor.blit("19", "00", "ff")
+        --eigth
+        monitor.setCursorPos(34, 7) 
+        monitor.blit("24", "00", "ff")
+        monitor.setCursorPos(34, 15) 
+        monitor.blit("23", "00", "ee")
+        monitor.setCursorPos(34, 22) 
+        monitor.blit("22", "00", "ff")
+        --ninth
+        monitor.setCursorPos(38, 7) 
+        monitor.blit("27", "00", "ee")
+        monitor.setCursorPos(38, 15) 
+        monitor.blit("26", "00", "ff")
+        monitor.setCursorPos(38, 22) 
+        monitor.blit("25", "00", "ee")
+        --tenth
+        monitor.setCursorPos(42, 7) 
+        monitor.blit("30", "00", "ee")
+        monitor.setCursorPos(42, 15) 
+        monitor.blit("29", "00", "ff")
+        monitor.setCursorPos(42, 22) 
+        monitor.blit("28", "00", "ee")
+        --eleventh
+        monitor.setCursorPos(46, 7) 
+        monitor.blit("33", "00", "ff")
+        monitor.setCursorPos(46, 15) 
+        monitor.blit("32", "00", "ee")
+        monitor.setCursorPos(46, 22) 
+        monitor.blit("31", "00", "ff")
+        --twelth
+        monitor.setCursorPos(50, 7) 
+        monitor.blit("36", "00", "ee")
+        monitor.setCursorPos(50, 15) 
+        monitor.blit("35", "00", "ff")
+        monitor.setCursorPos(50, 22) 
+        monitor.blit("34", "00", "ee")
+        --Two21 row
+        monitor.setCursorPos(54, 7)
+        monitor.blit("1st", "000", "ddd")
+        monitor.setCursorPos(54, 8)
+        monitor.blit("Row", "000", "ddd")
+        monitor.setCursorPos(54, 14) 
+        monitor.blit("2nd", "000", "ddd")
+        monitor.setCursorPos(54, 15)
+        monitor.blit("Row", "000", "ddd")
+        monitor.setCursorPos(54, 22) 
+        monitor.blit("3rd", "000", "ddd")
+        monitor.setCursorPos(54, 23)
+        monitor.blit("Row", "000", "ddd")
+        --twelves
+        monitor.setCursorPos(11, 28) 
+        monitor.blit("1st 12", "000000", "dddddd")
+        monitor.setCursorPos(26, 28) 
+        monitor.blit("2nd 12", "000000", "dddddd")
+        monitor.setCursorPos(43, 28) 
+        monitor.blit("3rd 12", "000000", "dddddd")
+        --Bottom row
+        monitor.setCursorPos(6, 33) 
+        monitor.blit("1-18", "0000", "dddd")
+        monitor.setCursorPos(15, 33) 
+        monitor.blit("Even", "0000", "dddd")
+        monitor.setCursorPos(23, 33) 
+        monitor.blit("Red", "000", "eee")
+        monitor.setCursorPos(31, 33) 
+        monitor.blit("Black", "00000", "fffff")
+        monitor.setCursorPos(40, 33) 
+        monitor.blit("Odd", "000", "ddd")
+        monitor.setCursorPos(48, 33) 
+        monitor.blit("19-36", "00000", "ddddd")
+        --chips
+        monitor.setCursorPos(30, 36) 
+        monitor.blit("100", "aaa", "111")
+        monitor.setCursorPos(37, 36) 
+        monitor.blit("500", "aaa", "111")
+        monitor.setCursorPos(43, 36) 
+        monitor.blit("1000", "aaaa", "1111")
+        monitor.setCursorPos(50, 36) 
+        monitor.blit("2500", "aaaa", "1111")
+
+        -- Example bet label
+        monitor.setCursorPos(30, 38)
+        monitor.blit("Clear Bets", "ffffffffff", "dddddddddd")
+        monitor.setCursorPos(43, 38)
+        monitor.blit("SPIN", "432e", "dddd")
+
+        -- Draw placed bets
+        for zone, amount in pairs(placedBets) do
+            local center = monitorHitboxes[zone] and monitorHitboxes[zone][1]
+            if center then
+                monitor.setCursorPos(center[1], center[2])
+                monitor.setTextColor(colors.yellow)
+                monitor.write(tostring(amount))
+            end
+        end
+    end
+end
+
+-- === Rednet Communication ===
+local function requestBalance(name)
+    rednet.send(ACCOUNT_COMPUTER_ID, {action = "get_balance", player = name})
+    local id, msg = rednet.receive(2)
+    if id == ACCOUNT_COMPUTER_ID and msg.player == name then
+        return tonumber(msg.balance) or 0
+    end
+    return 0
+end
+
+local function sendBalanceChange(name, delta)
+    rednet.send(ACCOUNT_COMPUTER_ID, {action = "transfer", player = name, delta = delta})
+    local id, msg = rednet.receive(2)
+    if id == ACCOUNT_COMPUTER_ID and msg.player == name then
+        return tonumber(msg.balance) or 0
+    end
+    return 0
+end
+
+-- === Temporary Spin Logic ===
+local function getTempSpin()
+    local roll = math.random(1, 38)
+    if roll == 1 then return "0"
+    elseif roll == 2 then return "00"
+    else return tostring(roll - 2)
+    end
+end
+
+-- === Get Touch Zone ===
+local function getZoneAt(x, y)
+    for name, positions in pairs(monitorHitboxes) do
+        for _, pos in ipairs(positions) do
+            if x == pos[1] and y == pos[2] then
+                return name
+            end
+        end
+    end
+    return nil
+end
+
+-- === Player Detection ===
+local function detectPlayer()
+    local players = radar.getPlayers()
+    local closest = nil
+    for _, p in ipairs(players) do
+        if p.distance >= MIN_DISTANCE and p.distance <= MAX_DISTANCE then
+            if not closest or p.distance < closest.distance then
+                closest = p
+            end
+        end
+    end
+    return closest
+end
+
+-- === Threads ===
+local function radarLoop()
+    while true do
+        local found = detectPlayer()
+        if found then
+            if activePlayer ~= found.name then
+                activePlayer = found.name
+                playerBalance = requestBalance(activePlayer)
+                message = "Welcome, " .. activePlayer
+            end
+        else
+            activePlayer = nil
+            playerBalance = 0
+            placingMode = false
+            betAmount = nil
+            message = ""
+        end
+        sleep(0.25)
+    end
+end
+
+local function displayLoop()
+    local lines = loadNFV("frame.nfv")
+    monitor.setTextScale(0.5)
+    while true do
+        drawBackground(lines)
+        drawOverlay(playerBalance, message)
+        sleep(0.1)
+    end
+end
+
+-- === Main Touch Logic ===
+local function touchLoop()
+    while true do
+        local _, _, x, y = os.pullEvent("monitor_touch")
+        if not activePlayer then return end
+
+        local zone = getZoneAt(x, y)
+        if zone then
+            if zone:match("chip_") then
+                local val = tonumber(zone:match("chip_(%d+)"))
+                if val and val <= playerBalance then
+                    selectedChip = val
+                    message = "Selected chip: $" .. val
+                else
+                    message = "Not enough balance for $" .. (val or "?")
+                end
+
+            elseif zone == "clear" then
+                local refund = 0
+                for _, amt in pairs(placedBets) do
+                    refund = refund + amt
+                end
+                if refund > 0 then
+                    playerBalance = sendBalanceChange(activePlayer, refund)
+                    message = "Refunded $" .. refund .. " back to balance."
+                else
+                    message = "No bets to refund."
+                end
+                placedBets = {}
+                selectedChip = nil
+
+
+            elseif zone == "spin" then
+                local spin = getTempSpin()
+                message = "Spin Result: " .. spin
+                local payout = 0
+
+                for betZone, amt in pairs(placedBets) do
+                    if betZone == spin then
+                        payout = payout + amt * 36
+                    elseif isDozen(betZone, spin) or isColumn(betZone, spin) then
+                        payout = payout + amt * 3
+                    elseif isExtra(betZone, spin) or isColor(betZone, spin) then
+                        payout = payout + amt * 2
+                    end
+                end
+
+                if payout > 0 then
+                    playerBalance = sendBalanceChange(activePlayer, payout)
+                    message = "You won $" .. payout .. "! (" .. spin .. ")"
+                else
+                    message = "No win on " .. spin
+                end
+
+                placedBets = {}
+                selectedChip = nil
+
+            else
+                if not selectedChip then
+                    message = "Select a chip first."
+                elseif playerBalance >= selectedChip then
+                    placedBets[zone] = (placedBets[zone] or 0) + selectedChip
+                    playerBalance = sendBalanceChange(activePlayer, -selectedChip)
+                    message = "Placed $" .. selectedChip .. " on " .. zone
+                else
+                    message = "Not enough balance."
+                end
+            end
+        end
+    end
+end
+
+-- === Run ===
+parallel.waitForAny(
+    radarLoop,
+    displayLoop,
+    touchLoop
+)
