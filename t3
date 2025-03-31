@@ -1,0 +1,21 @@
+print("Checking integrators...")
+local activeIntegrator = nil
+
+for _, name in ipairs(peripheral.getNames()) do
+    local periphType = peripheral.getType(name)
+    if periphType == "redstone_integrator" then
+        local integrator = peripheral.wrap(name)
+        local active = integrator.getInput("top")
+        print(name .. " is " .. (active and "ACTIVE" or "inactive"))
+
+        if active then
+            activeIntegrator = name
+        end
+    end
+end
+
+if activeIntegrator then
+    print("🔁 Result: " .. activeIntegrator .. " is the active integrator.")
+else
+    print("⚠️ No integrator is currently active.")
+end
