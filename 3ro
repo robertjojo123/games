@@ -1,0 +1,190 @@
+-- Roulette Betting Terminal - Final Version with Color-Corrected Palette
+
+-- === Peripherals ===
+local monitor = peripheral.wrap("top")
+local radar = peripheral.wrap("right")
+local modem = peripheral.wrap("bottom")
+rednet.open("bottom")
+
+-- === Config ===
+local ACCOUNT_COMPUTER_ID = 2
+local BET_AMOUNTS = {500, 1000, 5000, 10000, 15000}
+local MIN_DISTANCE, MAX_DISTANCE = 1, 3
+
+-- === Load NFV Frame ===
+local function loadNFV(path)
+    local file = fs.open(path, "r")
+    local width, height = file.readLine():match("(%d+)%s+(%d+)")
+    local lines = {}
+    for i = 1, tonumber(height) do
+        table.insert(lines, file.readLine() or "")
+    end
+    file.close()
+    return lines
+end
+
+-- === FINAL COLOR PALETTE (Roulette-Corrected) ===
+local COLOR_MAP = {
+    f = colors.black,
+    e = colors.green,  -- 0/00
+    d = colors.red,
+    c = colors.red,
+    b = colors.black,
+    a = colors.black,
+    [9] = colors.red,
+    [8] = colors.black,
+    [7] = colors.black
+}
+
+local function drawPixel(x, y, color)
+    monitor.setCursorPos(x, y)
+    monitor.setBackgroundColor(color)
+    monitor.write(" ")
+end
+
+local function drawBackground(lines)
+    monitor.clear()
+    for y, row in ipairs(lines) do
+        for x = 1, math.min(#row, 57) do
+            local ch = row:sub(x, x):lower()
+            local color = COLOR_MAP[ch] or colors.white
+            drawPixel(x, y, color)
+        end
+    end
+end
+
+-- === Overlay UI ===
+local function drawOverlay(balance, message)
+    monitor.setCursorPos(2, 2)
+    monitor.setBackgroundColor(colors.black)
+    monitor.setTextColor(colors.yellow)
+    monitor.write("Balance: $" .. balance)
+
+    if message and message ~= "" then
+        monitor.setCursorPos(2, 36)
+        monitor.setTextColor(colors.orange)
+        monitor.write(message)
+    end
+end
+
+-- === Globals ===
+local activePlayer = nil
+local playerBalance = 0
+local placingMode = false
+local betAmount = nil
+local message = ""
+
+-- === Player Detection ===
+local function detectPlayer()
+    local players = radar.getPlayers()
+    local closest = nil
+    for _, p in ipairs(players) do
+        if p.distance >= MIN_DISTANCE and p.distance <= MAX_DISTANCE then
+            if not closest or p.distance < closest.distance then
+                closest = p
+            end
+        end
+    end
+    return closest
+end
+
+-- === Rednet Communication ===
+local function requestBalance(name)
+    rednet.send(ACCOUNT_COMPUTER_ID, {action = "get_balance", player = name})
+    local id, msg = rednet.receive(2)
+    if id == ACCOUNT_COMPUTER_ID and msg.player == name then
+        return tonumber(msg.balance) or 0
+    end
+    return 0
+end
+
+local function sendBalanceChange(name, delta)
+    rednet.send(ACCOUNT_COMPUTER_ID, {action = "transfer", player = name, delta = delta})
+    local id, msg = rednet.receive(2)
+    if id == ACCOUNT_COMPUTER_ID and msg.player == name then
+        return tonumber(msg.balance) or 0
+    end
+    return 0
+end
+
+-- === Temporary Spin Logic ===
+local function getTempSpin()
+    local roll = math.random(1, 38)
+    if roll == 1 then return "0"
+    elseif roll == 2 then return "00"
+    else return tostring(roll - 2)
+    end
+end
+
+-- === Threads ===
+local function radarLoop()
+    while true do
+        local found = detectPlayer()
+        if found then
+            if activePlayer ~= found.name then
+                activePlayer = found.name
+                playerBalance = requestBalance(activePlayer)
+                message = "Welcome, " .. activePlayer
+            end
+        else
+            activePlayer = nil
+            playerBalance = 0
+            placingMode = false
+            betAmount = nil
+            message = ""
+        end
+        sleep(0.25)
+    end
+end
+
+local function displayLoop()
+    local lines = loadNFV("roulette_colors.nfv")
+    monitor.setTextScale(0.5)
+    while true do
+        drawBackground(lines)
+        drawOverlay(playerBalance, message)
+        sleep(0.1)
+    end
+end
+
+local function touchLoop()
+    while true do
+        local _, _, x, y = os.pullEvent("monitor_touch")
+        if not activePlayer then return end
+
+        if placingMode then
+            local spin = getTempSpin()
+            local win = (spin == "1" or spin == "3" or spin == "5")
+            if win then
+                playerBalance = sendBalanceChange(activePlayer, betAmount)
+                message = "🎉 WIN on " .. spin
+            else
+                playerBalance = sendBalanceChange(activePlayer, -betAmount)
+                message = "💀 LOST on " .. spin
+            end
+            placingMode = false
+        else
+            if y == 35 then
+                for i, amt in ipairs(BET_AMOUNTS) do
+                    local bx = 2 + (i - 1) * 10
+                    if x >= bx and x <= bx + 6 then
+                        if amt <= playerBalance then
+                            betAmount = amt
+                            placingMode = true
+                            message = "Click board to bet $" .. amt
+                        else
+                            message = "⚠️ Not enough balance!"
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- === Run ===
+parallel.waitForAny(
+    radarLoop,
+    displayLoop,
+    touchLoop
+)
