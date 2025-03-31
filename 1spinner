@@ -1,0 +1,43 @@
+
+-- Roulette Spinner Computer
+
+local modem = peripheral.wrap("bottom")
+rednet.open("bottom")
+
+-- Get all integrator peripherals
+local integrators = {}
+for _, side in ipairs(peripheral.getNames()) do
+    if peripheral.getType(side) == "redstoneIntegrator" then
+        table.insert(integrators, side)
+    end
+end
+
+print("Spinner Ready")
+
+while true do
+    local senderId, msg = rednet.receive()
+    if msg == "spin" then
+        print("Spin triggered")
+        redstone.setOutput("back", true)
+        sleep(math.random(10, 48))
+        redstone.setOutput("back", false)
+        sleep(3)
+
+        -- Find active integrator
+        local result = nil
+        for _, name in ipairs(integrators) do
+            if peripheral.call(name, "getInput", "top") then
+                result = name
+                break
+            end
+        end
+
+        if result then
+            rednet.send(senderId, {action = "result", integrator = result})
+            print("Result sent: " .. result)
+        else
+            rednet.send(senderId, {action = "result", integrator = "none"})
+            print("No result found")
+        end
+    end
+end
