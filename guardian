@@ -1,0 +1,94 @@
+-- === CONFIGURATION ===
+local ownerName = "HughJaynis124"
+
+local whitelist = {
+    [ownerName] = true,
+    ["HughJaynis1234"] = true,
+    ["Mista Fista"] = true,
+    ["Flag"] = true,
+    ["Iron Golem"] = true,
+    ["RadoslawGuzior"] = true,
+    ["Glass Item Frame"] = true,
+    ["Mr Fister"] = true,
+    ["EmTheTurtle03"] = true,
+    ["Cow"] = true,
+    ["Chicken"] = true,
+    ["Pig"] = true,
+    ["Sheep"] = true,
+    ["Villager"] = true,
+    ["Bat"] = true,
+    ["Horse"] = true,
+    ["Ocelot"] = true,
+    ["Wolf"] = true,
+    ["Cat"] = true,
+    ["Mooshroom"] = true,
+    ["Rabbit"] = true,
+    ["Parrot"] = true,
+    ["Squid"] = true,
+    ["Turtle"] = true,
+    ["Dolphin"] = true,
+    ["Fox"] = true,
+    ["Pufferfish"] = true,
+    ["Salmon"] = true,
+    ["Tropical Fish"] = true,
+    ["Trader Llama"] = true,
+    ["Wandering Trader"] = true,
+}
+local whitelistPrefixes = {
+    "item", -- Example: whitelist anything starting with "item"
+}
+
+
+local attackRange = 15
+local laserPotency = 5
+local attackDelay = .2
+local followDistance = 6
+
+-- === MODULE WRAP ===
+local ni = peripheral.find("neuralInterface")
+if not ni then error("Neural Interface not found!") end
+ni.disableAI()
+
+-- === AIMING FUNCTION ===
+local function getYawPitch(dx, dy, dz)
+    local yaw = math.deg(math.atan2(-dx, dz))
+    local pitch = math.deg(math.atan2(dy, math.sqrt(dx * dx + dz * dz)))
+    return yaw, pitch
+end
+
+local function isWhitelistedByPrefix(name)
+    for _, prefix in ipairs(whitelistPrefixes) do
+        if string.sub(name, 1, #prefix) == prefix then
+            return true
+        end
+    end
+    return false
+end
+
+-- === MAIN LOOP ===
+while true do
+    local entities = ni.sense()
+    local owner = nil
+
+    for _, entity in ipairs(entities) do
+        local dx, dy, dz = entity.x, entity.y, entity.z
+        local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+
+        if entity.displayName == ownerName then
+            owner = entity
+        elseif not whitelist[entity.displayName] and not isWhitelistedByPrefix(entity.displayName) and dist <= attackRange then
+            local yaw, pitch = getYawPitch(dx, 0.5-dy, dz)
+            ni.fire(yaw, pitch, laserPotency)
+        end
+    end
+
+    if owner then
+        local dx, dy, dz = owner.x, owner.y, owner.z
+        local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+        if dist > followDistance then
+            ni.walk(dx, dy, dz)
+        end
+    end
+
+    sleep(attackDelay)
+end
