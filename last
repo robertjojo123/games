@@ -1,0 +1,74 @@
+-- === CONFIGURATION ===
+local ownerName = "HughJaynis1234"
+
+local whitelist = {
+    [ownerName] = true,
+    ["Friend1"] = true,
+    ["Cow"] = true,
+    ["Chicken"] = true,
+    ["Pig"] = true,
+    ["Sheep"] = true,
+    ["Villager"] = true,
+    ["Bat"] = true,
+    ["Horse"] = true,
+    ["Ocelot"] = true,
+    ["Wolf"] = true,
+    ["Cat"] = true,
+    ["Mooshroom"] = true,
+    ["Rabbit"] = true,
+    ["Parrot"] = true,
+    ["Squid"] = true,
+    ["Turtle"] = true,
+    ["Dolphin"] = true,
+    ["Fox"] = true,
+    ["Pufferfish"] = true,
+    ["Salmon"] = true,
+    ["Tropical Fish"] = true,
+    ["Trader Llama"] = true,
+    ["Wandering Trader"] = true,
+}
+
+local attackRange = 15
+local laserPotency = 3
+local attackDelay = 1
+local followDistance = 6
+
+-- === MODULE WRAP ===
+local ni = peripheral.find("neuralInterface")
+if not ni then error("Neural Interface not found!") end
+ni.disableAI()
+
+-- === AIMING FUNCTION ===
+local function getYawPitch(dx, dy, dz)
+    local yaw = math.deg(math.atan2(-dx, dz))
+    local pitch = math.deg(math.atan2(dy, math.sqrt(dx * dx + dz * dz)))
+    return yaw, pitch
+end
+
+-- === MAIN LOOP ===
+while true do
+    local entities = ni.sense()
+    local owner = nil
+
+    for _, entity in ipairs(entities) do
+        local dx, dy, dz = entity.x, entity.y, entity.z
+        local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+
+        if entity.name == ownerName then
+            owner = entity
+        elseif not whitelist[entity.name] and dist <= attackRange then
+            local yaw, pitch = getYawPitch(dx, dy, dz)
+            ni.fire(yaw, pitch, laserPotency)
+        end
+    end
+
+    if owner then
+        local dx, dy, dz = owner.x, owner.y, owner.z
+        local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+        if dist > followDistance then
+            ni.walk(dx, dy, dz)
+        end
+    end
+
+    sleep(attackDelay)
+end
