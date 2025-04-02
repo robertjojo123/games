@@ -1,0 +1,61 @@
+-- === CONFIGURATION ===
+local whitelist = {
+    ["HughJaynis1234"] = true, -- You are the owner
+    ["Friend1"] = true
+}
+
+local attackRange = 15
+local laserPotency = 3
+local attackDelay = 1
+local followDistance = 6
+
+-- === FIND NEURAL INTERFACE ===
+local ni = peripheral.find("neuralInterface")
+if not ni then error("No Neural Interface found!") end
+ni.disableAI()
+
+-- === UTILITIES ===
+local function getYawPitch(dx, dy, dz)
+    local yaw = math.deg(math.atan2(-dx, dz))
+    local pitch = math.deg(math.atan2(dy, math.sqrt(dx * dx + dz * dz)))
+    return yaw, pitch
+end
+
+-- === MAIN LOOP ===
+while true do
+    local entities = ni.sense()
+    local owner = nil
+    local hostilePlayer = nil
+
+    for _, entity in ipairs(entities) do
+        if entity.name == "HughJaynis1234" then
+            owner = entity
+        elseif entity.kind == "PLAYER" and not whitelist[entity.name] then
+            -- Target the first unauthorized player in range
+            local dx, dy, dz = entity.x, entity.y, entity.z
+            local dist = math.sqrt(dx*dx + dy*dy + dz*dz)
+            if dist <= attackRange then
+                hostilePlayer = entity
+                break
+            end
+        end
+    end
+
+    -- Shoot at target
+    if hostilePlayer then
+        local dx, dy, dz = hostilePlayer.x, hostilePlayer.y, hostilePlayer.z
+        local yaw, pitch = getYawPitch(dx, dy, dz)
+        ni.fire(yaw, pitch, laserPotency)
+    end
+
+    -- Follow owner
+    if owner then
+        local dx, dy, dz = owner.x, owner.y, owner.z
+        local dist = math.sqrt(dx*dx + dy*dy + dz*dz)
+        if dist > followDistance and ni.walk then
+            ni.walk(dx, dy, dz)
+        end
+    end
+
+    sleep(attackDelay)
+end
