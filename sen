@@ -1,0 +1,65 @@
+-- === SETUP ===
+local ni = peripheral.find("neuralInterface")
+if not ni then error("No neural interface found!") end
+
+ni.disableAI() -- Stop natural AI like wandering or attacking
+
+-- === CONFIGURATION ===
+local laserPower = 5
+local scanDelay = 0.3
+local shootCooldown = 0.3
+local attackRange = 20
+local followDistance = 6
+
+local ownerName = "HughJaynis1234"
+local whitelist = {
+    [ownerName] = true,
+    ["Friend1"] = true,
+    ["Friend2"] = true
+}
+
+-- === AIM & FIRE ===
+local function getYawPitch(dx, dy, dz)
+    local yaw = math.deg(math.atan2(-dx, dz))
+    local pitch = math.deg(math.atan2(dy, math.sqrt(dx * dx + dz * dz)))
+    return yaw, pitch
+end
+
+local function fireAt(entity)
+    local yaw, pitch = getYawPitch(entity.x, entity.y, entity.z)
+    ni.fire(yaw, pitch, laserPower)
+    sleep(shootCooldown)
+end
+
+-- === MAIN LOOP ===
+while true do
+    local entities = ni.sense()
+    local owner = nil
+    local targets = {}
+
+    for _, ent in ipairs(entities) do
+        if ent.name == ownerName then
+            owner = ent
+        elseif ent.name and ent.kind == "PLAYER" and not whitelist[ent.name] then
+            local dist = math.sqrt(ent.x^2 + ent.y^2 + ent.z^2)
+            if dist <= attackRange then
+                table.insert(targets, ent)
+            end
+        end
+    end
+
+    -- Follow the owner
+    if owner then
+        local dist = math.sqrt(owner.x^2 + owner.y^2 + owner.z^2)
+        if dist > followDistance then
+            ni.walk(owner.x, owner.y, owner.z)
+        end
+    end
+
+    -- Fire at one target
+    if #targets > 0 then
+        fireAt(targets[math.random(1, #targets)])
+    end
+
+    sleep(scanDelay)
+end
