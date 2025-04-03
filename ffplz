@@ -1,0 +1,144 @@
+-- === CONFIGURATION ===
+local ownerName = "HughJaynis124"
+
+local whitelist = {
+    [ownerName] = true,
+    ["HughJaynis1234"] = true,
+    ["Mista Fista"] = true,
+    ["Flag"] = true,
+    ["Iron Golem"] = true,
+    ["RadoslawGuzior"] = true,
+    ["Glass Item Frame"] = true,
+    ["Mr Fister"] = true,
+    ["EmTheTurtle03"] = true,
+    ["Cow"] = true, ["Chicken"] = true, ["Pig"] = true, ["Sheep"] = true,
+    ["Villager"] = true, ["Bat"] = true, ["Horse"] = true, ["Ocelot"] = true,
+    ["Wolf"] = true, ["Cat"] = true, ["Mooshroom"] = true, ["Rabbit"] = true,
+    ["Parrot"] = true, ["Squid"] = true, ["Turtle"] = true, ["Dolphin"] = true,
+    ["Fox"] = true, ["Pufferfish"] = true, ["Salmon"] = true,
+    ["Tropical Fish"] = true, ["Trader Llama"] = true, ["Wandering Trader"] = true,
+}
+
+local whitelistPrefixes = { "item." }
+
+local attackRange = 15
+local laserPotency = 0.5
+local attackDelay = 1
+local followDistance = 6
+local scanInterval = 15
+
+-- === INITIALIZE NEURAL INTERFACE ===
+local ni = peripheral.find("neuralInterface") or error("Neural Interface not found!")
+ni.disableAI()
+
+-- === INITIALIZE OVERLAY CANVAS ===
+local canvas = ni.canvas()
+canvas.clear()
+
+-- Overlay elements
+local timeDisplay = canvas.addText({1, 1}, "Time (MST): ", 0x00FF00)
+local compassDisplay = canvas.addText({1, 2}, "Compass: ", 0xCCCCCC)
+local crystalAlert = canvas.addText({1, 3}, "Cave Crystals: ", 0xFF00FF)
+local playerList = canvas.addText({1, 4}, "Nearby Players: ", 0xFFFFFF)
+
+-- === AIMING FUNCTION ===
+local function getYawPitch(dx, dy, dz)
+    local yaw = math.deg(math.atan2(-dx, dz))
+    local pitch = math.deg(math.atan2(dy, math.sqrt(dx * dx + dz * dz)))
+    return yaw, pitch
+end
+
+-- === HELPER FUNCTIONS ===
+local function isWhitelistedByPrefix(name)
+    for _, prefix in ipairs(whitelistPrefixes) do
+        if string.sub(name, 1, #prefix) == prefix then return true end
+    end
+    return false
+end
+
+local function getTime()
+    local time = os.time("local")
+    local h = math.floor(time)
+    local m = math.floor((time - h) * 60)
+    return string.format("%02d:%02d", h, m)
+end
+
+local function getDirection(dx, dz)
+    local angle = math.deg(math.atan2(-dx, dz))
+    local directions = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"}
+    local index = math.floor((angle + 22.5) / 45) % 8 + 1
+    return directions[index]
+end
+
+-- === MAIN LOOP ===
+while true do
+    local entities = ni.sense()
+    local owner = nil
+    local nearbyPlayers = {}
+
+    for _, entity in ipairs(entities) do
+        local dx, dy, dz = entity.x, entity.y, entity.z
+        local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+
+        if entity.displayName == ownerName then
+            owner = entity
+        elseif not whitelist[entity.displayName] and not isWhitelistedByPrefix(entity.displayName) then
+            if dist <= attackRange then
+                local yaw, pitch = getYawPitch(dx, dy, dz)
+                ni.fire(yaw, pitch, laserPotency)
+            end
+        end
+
+        -- Collect all nearby players for display
+        if entity.kind == "Player" then
+            table.insert(nearbyPlayers, entity.displayName)
+        end
+    end
+
+    -- Follow owner if they are far away
+    if owner then
+        local dx, dy, dz = owner.x, owner.y, owner.z
+        local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+        if dist > followDistance then
+            ni.walk(dx, dy, dz)
+        end
+    end
+
+    -- Update Overlay Displays
+    timeDisplay.setText("Time (MST): " .. getTime())
+
+    if owner then
+        local dir = getDirection(owner.x, owner.z)
+        compassDisplay.setText("Compass: Facing " .. dir)
+    else
+        compassDisplay.setText("Compass: N/A")
+    end
+
+    if #nearbyPlayers > 0 then
+        playerList.setText("Nearby Players: " .. table.concat(nearbyPlayers, ", "))
+    else
+        playerList.setText("Nearby Players: None")
+    end
+
+    -- Scan for cave crystals periodically
+    if os.clock() % scanInterval < attackDelay then
+        local blocks = ni.scan()
+        local foundCrystals = {}
+
+        for _, block in ipairs(blocks) do
+            if block.name:lower():find("crystal") then
+                local dx, dz = block.x, block.z
+                local dir = getDirection(dx, dz)
+                table.insert(foundCrystals, dir)
+            end
+        end
+
+        if #foundCrystals > 0 then
+            crystalAlert.setText("Cave Crystals: " .. table.concat(foundCrystals, ", "))
+        else
+            crystalAlert.setText("Cave Crystals: None")
+        end
+    end
+
+    sleep(attackDelay)
+end
