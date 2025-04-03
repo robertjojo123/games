@@ -1,0 +1,93 @@
+-- === CONFIGURATION ===
+local whitelist = {
+    ["HughJaynis1234"] = true,
+    ["Friend1"] = true,
+    ["Friend2"] = true
+}
+
+local prefixWhitelist = {
+    "Shop_", "Bot_", "ItemFrame"
+}
+
+local attackRange = 15
+local laserPotency = 2
+local attackDelay = 1.5
+local followDistance = 5
+local mobKind = "MOB"
+
+-- === MODULE WRAP ===
+local ni = peripheral.find("neuralInterface")
+if not ni then error("Neural Interface not found") end
+--ni.disableAI()
+
+-- === AIMING FUNCTION ===
+local function getYawPitch(dx, dy, dz)
+    local yaw = math.deg(math.atan2(-dx, dz))
+    local pitch = math.deg(math.atan2(dy, math.sqrt(dx*dx + dz*dz)))
+    return yaw, pitch
+end
+
+-- === WHITELIST CHECK ===
+local function isWhitelisted(name)
+    if whitelist[name] then return true end
+    for _, prefix in ipairs(prefixWhitelist) do
+        if name:sub(1, #prefix) == prefix then return true end
+    end
+    return false
+end
+
+-- === DISPLAY SETUP ===
+local canvas = ni.canvas()
+canvas.clear()
+local rect = canvas.addRectangle({5, 5}, 250, 30, 0x000000)
+rect.setAlpha(100)
+local timeText = canvas.addText({10, 10}, "")
+timeText.setScale(2)
+
+local entityText = canvas.addText({10, 40}, "")
+entityText.setScale(1.5)
+
+-- === MAIN LOOP ===
+while true do
+    local entities = ni.sense()
+    local owner = nil
+    local nearEntities = {}
+
+    for _, entity in ipairs(entities) do
+        if entity.name == "HughJaynis1234" then
+            owner = entity
+        end
+
+        -- Record info about visible entities
+        table.insert(nearEntities, entity.name)
+
+        -- Attack logic only for non-whitelisted players or hostiles
+        if not isWhitelisted(entity.name) and entity.name ~= "HughJaynis1234" then
+            local dx = entity.x
+            local dy = entity.y
+            local dz = entity.z
+            local dist = math.sqrt(dx*dx + dy*dy + dz*dz)
+            if dist <= attackRange then
+                local yaw, pitch = getYawPitch(dx, dy, dz)
+                ni.fire(yaw, pitch, laserPotency)
+            end
+        end
+    end
+
+    -- Display time and entities
+    timeText.setText("MST: " .. textutils.formatTime(os.time(), false))
+    entityText.setText("Nearby: " .. table.concat(nearEntities, ", "))
+
+    -- Follow owner
+    if owner then
+        local dx = owner.x
+        local dy = owner.y
+        local dz = owner.z
+        local dist = math.sqrt(dx*dx + dy*dy + dz*dz)
+        if dist > followDistance then
+            ni.walk(dx, dy, dz)
+        end
+    end
+
+    sleep(attackDelay)
+end
