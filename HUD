@@ -1,0 +1,453 @@
+-- === CONFIGURATION ===
+local whitelist = {
+    ["HughJaynis1234"] = true, ["Friend1"] = true, ["Friend2"] = true,
+    ["Mista Fista"] = true, ["Flag"] = true, ["Iron Golem"] = true,
+    ["RadoslawGuzior"] = true, ["Glass Item Frame"] = true,
+    ["Mr Fister"] = true, ["EmTheTurtle03"] = true,
+    ["Cow"] = true, ["Chicken"] = true, ["Pig"] = true, ["Sheep"] = true,
+    ["Villager"] = true, ["Bat"] = true, ["Horse"] = true, ["Ocelot"] = true,
+    ["Wolf"] = true, ["Cat"] = true, ["Mooshroom"] = true, ["Rabbit"] = true,
+    ["Parrot"] = true, ["Squid"] = true, ["Turtle"] = true, ["Dolphin"] = true,
+    ["Fox"] = true, ["Pufferfish"] = true, ["Salmon"] = true,
+    ["Tropical Fish"] = true, ["Trader Llama"] = true, ["Wandering Trader"] = true,
+}
+
+local prefixWhitelist = {"Shop_", "Bot_", "ItemFrame", "item", "XPO", "Item"}
+local prefixBlacklist = {"Glass", "Item", "item", "Painting", "painting", "Flag", "gcflag", "flag", "quark", "Armor", "armor", "quark:glass_item_frame"}
+
+local attackRange = 15
+local laserPotency = 0.5
+local attackDelay = 3
+local ACCOUNT_ID = 8166
+local showBalances = false
+local lastBalances = {}
+-- === SETUP ===
+local ni = peripheral.find("neuralInterface")
+if not ni then error("Neural Interface not found") end
+pcall(function() rednet.open("back") end)
+
+local autoFire = false
+
+--local function keyListener()
+--    while true do
+--        local _, key = os.pullEvent("key")
+--        local name = keys.getName(key)
+--        if name == "b" then
+--            print("yes")
+--            autoFire = not autoFire
+--            print("Auto-fire:", autoFire and "ENABLED" or "DISABLED")
+--            if autoFire then
+--                autoFireStatusText.setText("Auto-Fire: ON")
+--                autoFireStatusText.setColor(0x55FF55) -- green
+--            else
+--                autoFireStatusText.setText("Auto-Fire: OFF")
+--                autoFireStatusText.setColor(0xFF5555)
+--            end
+--        end
+--    end
+--end
+
+--local function autoFireLoop()
+--    while true do
+--        if autoFire then
+--            local target = {x = 0, y = 1, z = 5}
+--            local yaw, pitch = getYawPitch(target.x, target.y, target.z)
+--            ni.fire(meta.yaw, meta.pitch, 1)
+--        end
+--        sleep(0.2)
+--    end
+--end
+local inputMode = false
+local inputStage = 0
+local currentInput = ""
+local selectedPlayer = nil
+local capitalMode = false
+
+-- === CANVAS 3D UI USING create() ===
+
+-- === CANVAS 3D UI USING create() + DYNAMIC POSITIONING ===
+local rootCanvas = ni.canvas3d()
+rootCanvas.clear()
+
+-- Initial canvas in front of the player (gets repositioned constantly)
+local canvas = rootCanvas.create({0, 0, 0})
+
+-- Dynamically recenter canvas in front of player's eyes
+local function updateHUDPosition()
+    local meta = ni.getMeta()
+    if not meta then return end
+
+    local x, y, z = meta.x, meta.y + 1.6, meta.z
+    local yaw = math.rad(meta.yaw)
+    local dx = math.sin(yaw)
+    local dz = math.cos(yaw)
+
+    -- Set canvas position 1 block in front of where the player is facing
+    canvas.recenter({x + dx, y, z + dz})
+end
+
+-- Smaller spacing for compact vertical layout
+local spacing = 0.15
+local baseY = 0.45
+
+-- Add text to floating HUD frame
+local function addHUDText(yOffset, text, scale, color)
+    local label = canvas.addFrame({0, baseY + yOffset, 0})
+    local t = label.addText({0, 0}, text, color or 0xFFFFFF)
+    t.setScale(scale or 1)
+    return t
+end
+
+-- UI Elements with compact layout
+local inputTt = addHUDText(spacing * 3, "", 1, 0xFFFFFF)
+local autoFireStatusText = addHUDText(spacing * 2, "Auto-Fire: OFF", 1, 0xF555FF)
+local timeText = addHUDText(spacing * 1, "", 1.5, 0x80DFFF)
+local entityText = addHUDText(0, "", 1, 0xFF00BF)
+local compassDisplay = addHUDText(-spacing * 1, "Facing: ", 1.5, 0x00BFFF)
+local caveCrystalLabel = addHUDText(-spacing * 2, "", 1.5, 0xD8BFD8)
+local balanceText = addHUDText(-spacing * 3, "", 1, 0x00FFAA)
+
+
+local modem = peripheral.wrap("front")
+
+-- === HELPERS ===
+local function isWhitelisted(name)
+    if whitelist[name] then return true end
+    for _, prefix in ipairs(prefixWhitelist) do
+        if name:sub(1, #prefix) == prefix then return true end
+    end
+    return false
+end
+
+local function isBlacklistedByPrefix(name)
+    for _, prefix in ipairs(prefixBlacklist) do
+        if name:sub(1, #prefix) == prefix then return true end
+    end
+    return false
+end
+
+local function getYawPitch(dx, dy, dz)
+    local yaw = math.deg(math.atan2(-dx, dz))
+    local pitch = math.deg(math.atan2(dy, math.sqrt(dx*dx + dz*dz)))
+    return yaw, pitch
+end
+
+local aimX, aimY, aimZ = 0, 0, 5
+local orientation = 0
+
+local function rotateWall(dir)
+    orientation = (orientation + dir) % 4
+    local oldX, oldZ = wallX, wallZ
+    if dir == 1 then
+        wallX = -oldZ
+        wallZ = oldX
+    elseif dir == -1 then
+        wallX = oldZ
+        wallZ = -oldX
+    end
+end
+    
+local function keyListener()
+    local bTimestamps = {}
+    while true do
+        local _, key = os.pullEvent("key")
+        local name = keys.getName(key)
+        if name == "0" and inputMode == false then
+            local now = os.clock()
+            table.insert(bTimestamps, 1)
+            if #bTimestamps > 3 then
+                table.remove(bTimestamps, 1)
+            end
+            if #bTimestamps == 3 and (bTimestamps[3] - bTimestamps[1]) <= 1.5 then
+                autoFire = not autoFire
+                print("Auto-fire:", autoFire and "ENABLED" or "DISABLED")
+                if autoFire then
+                    autoFireStatusText.setText("Auto-Fire: ON")
+                    autoFireStatusText.setColor(0xFF5FFF) -- green
+                else
+                    autoFireStatusText.setText("Auto-Fire: OFF")
+                    autoFireStatusText.setColor(0xFFFFF) -- red
+                end
+        
+            elseif name == "up" then
+                aimY = math.min(aimY + 1, 5)
+            elseif name == "down" then 
+                aimY = math.min(aimY - 1, -5)
+            elseif name == "right" then
+                if orientation == 0 then
+                    aimX = aimX - 1
+                elseif orientation == 1 then
+                    aimZ = aimZ + 1
+                elseif orientation == 2 then
+                    aimX = aimX + 1
+                elseif orientation == 3 then
+                    aimZ = aimZ - 1
+                end
+            elseif name == "left" then
+                if orientation == 0 then
+                    aimX = aimX + 1
+                elseif orientation == 1 then
+                    aimZ = aimZ - 1
+                elseif orientation == 2 then
+                    aimX = aimX - 1
+                elseif orientation == 3 then
+                    aimZ = aimZ + 1
+                end
+            end
+        
+            aimX = math.max(-2, math.min(2, aimX))
+            aimZ = math.max(-2, math.min(2, aimZ))
+        
+            if aimX > 2 then
+                aimX = -2
+                oritentation = (orientation + 1) % 4
+            elseif aimX < -2 then
+                aimX = 2
+                orientation = (orientation - 1) % 4
+            elseif aimZ < -2 then
+                aimZ = 2
+                orientation = (orientation - 1) % 4
+            elseif aimZ > 2 then
+                aimZ = -2
+                orientation = (orientation + 1) % 4
+            end
+        end
+    end
+end
+
+local function modifierKeyListener()
+    while true do
+        local _, key = os.pullEvent("key")
+        local name = keys.getName(key)
+        --if name == "leftShift" or name == "rightShift" then
+        --    capitalMode = not capitalMode
+        --    print("Capital Mode:", capitalMode and "ON" or "off")
+        if name == "r" and not inputMode then
+            inputMode = true
+            inputStage = 1
+            currentInput = ""
+            inputTt.setText("Enter full player name:")
+        end
+    end
+end
+
+local function autoFireLoop()
+    while true do
+        if autoFire then
+            local target = {x = 0, y = 0, z = 5} -- Forward direction
+            local yaw, pitch = getYawPitch(aimX, aimY, aimZ)
+            --ni.fire(yaw, pitch, 1)
+        end
+        sleep(0.25)
+    end
+end
+    
+
+local function checkCaveCrystals()
+    if not ni.hasModule("plethora:scanner") then
+        caveCrystalLabel.setText("Scanner not found")
+        return
+    end
+
+    local found = false
+    local blocks = ni.scan()
+    for _, block in ipairs(blocks) do
+        local lower = block.name:lower()
+        if lower:find("quark") and lower:find("crystal") then
+            found = true
+            break
+        end
+    end
+
+    if found then
+        caveCrystalLabel.setText("Cave Crystal Detected Nearby!")
+    else
+        caveCrystalLabel.setText("No Cave Crystals Nearby")
+    end
+end
+
+rednet.open("front")
+
+-- === BALANCE HANDLING ===
+local function listenForBalances()
+    while true do
+        local sender, msg = rednet.receive()
+        if type(msg) == "table" and msg.action == "top_balances" and type(msg.entries) == "table" then
+            local sorted = {}
+
+            --local display = "Top Balances:\n"
+            for i, entry in ipairs(msg.entries) do
+                table.insert(sorted, {name = entry.name, balance = tonumber(entry.balance) or 0})
+            end
+            table.sort(sorted, function(a, b)
+                return a.balance > b.balance
+            end)
+            
+            lastBalances = sorted
+            if showBalances then
+                local display = "Top Balances:\n"
+                for i, entry in ipairs(sorted) do
+                    display = display .. i .. ") " .. entry.name .. ": $" .. entry.balance .. "\n"
+                end
+                balanceText.setText(display)
+            end
+        end
+    end
+end
+
+-- === KEYBOARD TRIGGER ===
+local function keyboardSequenceListener()
+    local buffer = ""
+
+    while true do
+        local _, char = os.pullEvent("char")
+        buffer = buffer .. char:lower()
+        if #buffer > 10 then buffer = buffer:sub(-10) end
+
+        if buffer:sub(-5) == "boobs" then
+            showBalances = not showBalances
+            if showBalances then
+                rednet.send(ACCOUNT_ID, {action = "get_balance", player = "Hugh"})
+                balanceText.setText("Requesting balances...")
+            else
+                balanceText.setText("")
+            end
+            buffer = ""
+        end
+    end
+end
+
+-- === MAIN LOOP ===
+local function mainLoop()
+    local prevX, prevZ = nil, nil
+    updateHUDPosition()
+    while true do
+        local entities = ni.sense()
+        local owner = nil
+        local nearEntities = {}
+
+        for _, entity in ipairs(entities) do
+            if entity.name == "HughJaynis1234" then owner = entity end
+            local name = entity.displayName or "Unknown"
+
+            if not isBlacklistedByPrefix(name) then
+                table.insert(nearEntities, name)
+            end
+
+            if not isWhitelisted(entity.name) then
+                local dx, dy, dz = entity.x, entity.y, entity.z
+                local dist = math.sqrt(dx*dx + dy*dy + dz*dz)
+                if dist <= attackRange then
+                    local yaw, pitch = getYawPitch(dx, 0.75 - dy, dz)
+                    --ni.fire(yaw, pitch, laserPotency)
+                end
+            end
+        end
+
+        timeText.setText("MST: " .. textutils.formatTime((os.time("utc") + 6) % 12, true))
+
+        local entityList = table.concat(nearEntities, ", ")
+        if #entityList > 80 then
+            entityList = entityList:sub(1, 77) .. "..."
+        end
+        entityText.setText("Nearby: " .. entityList)
+
+        local meta = ni.getMetaByName("HughJaynis1234")
+        if meta then
+            local currentX = meta.x
+            local currentZ = meta.z
+
+            if prevX and prevZ then
+                local deltaX = currentX - prevX
+                local deltaZ = currentZ - prevZ
+                local direction = "Stationary"
+                if math.abs(deltaX) > math.abs(deltaZ) then
+                    direction = deltaX > 0 and "East" or "West"
+                elseif math.abs(deltaZ) > 0 then
+                    direction = deltaZ > 0 and "South" or "North"
+                end
+                compassDisplay.setText("Facing: " .. direction)
+            end
+
+            prevX = currentX
+            prevZ = currentZ
+        end
+
+        checkCaveCrystals()
+        sleep(attackDelay)
+    end
+end
+
+local function keyListen()
+    while true do
+        local _, key = os.pullEvent("key")
+        local name = keys.getName(key)
+        if name == "r" and not inputMode then
+            inputMode = true
+            inputStage = 1
+            currentInput = ""
+            inputTt.setText("Enter player name prefix:")
+        end
+    end
+end
+
+local backspace = keys.backspace
+local enter = keys.enter
+--local return = keys.return        
+                        
+local function keyboardInputHandler()
+    while true do
+        local event, a = os.pullEvent()
+        --local name = keys.getName(key)
+        if inputMode then
+            if event == "char" then -- Enter (some MCs use ctrl+m)
+                local char = a
+                if capitalMode then
+                    currentInput = currentInput .. string.upper(char)
+                else
+                    currentInput = currentInput .. char
+                end
+            elseif event == "key" then
+                local key = a
+                if key == keys.backspace then
+                    currentInput = currentInput:sub(1, -2)
+                elseif key == keys.enter then
+                    if inputStage == 1 then
+                        selectedPlayer = currentInput
+                        currentInput = ""
+                        inputStage = 2
+                        inputTt.setText("Enter new balance for " .. selectedPlayer .. ":")
+                    elseif inputStage == 2 then
+                        local balance = tonumber(currentInput)
+                        if balance then
+                            rednet.send(8166, {
+                                action = "payout",
+                                player = selectedPlayer,
+                                amount = balance,
+                                note = "manual reset via NI"
+                            })
+                            inputTt.setText("Sent reset for " .. selectedPlayer)
+                        else
+                            inputTt.setText("Invalid number, try again:")
+                        end
+                        inputMode = false
+                        inputStage = 0
+                        currentInput = ""
+                        selectedPlayer = nil
+                        os.sleep(1)
+                        inputTt.setText("")
+                    end
+                elseif key == keys.leftShift or key == keys.rightShift then -- backspace
+                    capitalMode = not capitalMode
+                end
+            end      
+            if inputStage == 1 then
+                inputTt.setText("Enter full player name: " .. currentInput)
+            elseif inputStage == 2 then
+                inputTt.setText("" .. selectedPlayer .. " -> " .. currentInput)
+            end
+        end
+    end
+end
+-- === RUN EVERYTHING ===
+parallel.waitForAny(modifierKeyListener, keyboardInputHandler, mainLoop, keyListener, autoFireLoop, keyboardSequenceListener, listenForBalances)
