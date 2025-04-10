@@ -1,0 +1,180 @@
+local configFile = "autocraft_rules"
+local config = { rules = {}, settings = { sleepTimer = 0.3 } }
+
+local function shortenName(name)
+    if #name <= 10 then return name end
+    return string.sub(name, 1, 3) .. ".." .. string.sub(name, -4)
+end
+
+-- Save/load config
+local function writeConfig()
+    local file = fs.open(configFile, "w")
+    file.write(textutils.serialize(config))
+    file.close()
+end
+
+local function loadConfig()
+    if fs.exists(configFile) then
+        local file = fs.open(configFile, "r")
+        config = textutils.unserialize(file.readAll()) or { rules = {}, settings = {} }
+        file.close()
+    end
+    config.rules = config.rules or {}
+    config.settings = config.settings or { sleepTimer = 0.3 }
+end
+
+-- Dual-column selector: left = sources, right = destinations
+local function dualSelect(periphs)
+    local srcStates, dstStates = {}, {}
+    for i = 1, #periphs do
+        srcStates[i] = false
+        dstStates[i] = false
+    end
+
+    while true do
+        term.clear()
+        term.setCursorPos(1, 1)
+        print("== Configure Rule ==")
+        print(" ")
+
+        for i, name in ipairs(periphs) do
+            term.setCursorPos(2, i + 2)
+            write("? [" .. (srcStates[i] and "x" or " ") .. "] " .. shortenName(name))
+            term.setCursorPos(35, i + 2)
+            write("? [" .. (dstStates[i] and "x" or " ") .. "] " .. shortenName(name))
+        end
+
+        term.setCursorPos(2, #periphs + 4)
+        write("[ Confirm Rule ]")
+
+        local event, button, x, y = os.pullEvent("mouse_click")
+        if button == 1 then
+            for i = 1, #periphs do
+                if y == i + 2 then
+                    if x >= 3 and x <= 6 then
+                        srcStates[i] = not srcStates[i]
+                    elseif x >= 36 and x <= 39 then
+                        dstStates[i] = not dstStates[i]
+                    end
+                end
+            end
+            if y == #periphs + 4 then
+                local sources, destinations = {}, {}
+                for i, state in ipairs(srcStates) do
+                    if state then table.insert(sources, periphs[i]) end
+                end
+                for i, state in ipairs(dstStates) do
+                    if state then table.insert(destinations, periphs[i]) end
+                end
+                return sources, destinations
+            end
+        end
+    end
+end
+
+-- Configure all rules
+local function configureRules()
+    local periphs = peripheral.getNames()
+
+    while true do
+        local sources, destinations = dualSelect(periphs)
+
+        print("Optional: How many items to send when restocking? (leave blank to fill full inventory):")
+        local inputAmount = read()
+        local restockAmount = tonumber(inputAmount)
+
+        print("Trigger restock when inventory is: [1] Empty, [2] <25%, [3] <50%")
+        local triggerInput = read()
+        local threshold = "empty"
+        if triggerInput == "2" then
+            threshold = "quarter"
+        elseif triggerInput == "3" then
+            threshold = "half"
+        end
+
+        table.insert(config.rules, {
+            sources = sources,
+            destinations = destinations,
+            restockAmount = restockAmount,
+            triggerThreshold = threshold
+        })
+
+        term.clear()
+        term.setCursorPos(1,1)
+        print("Rule added.")
+        print(" ")
+        print("[1] Add another rule")
+        print("[2] Save and start")
+        local choice = read()
+        if choice == "2" then
+            writeConfig()
+            break
+        end
+    end
+end
+
+-- Display rules
+local function displayRules()
+    print("== Running " .. #config.rules .. " Rule(s) ==")
+    for i, rule in ipairs(config.rules) do
+        local srcs = table.concat(rule.sources, ", ")
+        local dsts = table.concat(rule.destinations, ", ")
+        local amt = rule.restockAmount and (" (" .. rule.restockAmount .. " per restock)") or " (auto-fill)"
+        print("[" .. srcs .. "] ➜ [" .. dsts .. "]" .. amt .. " when " .. rule.triggerThreshold)
+    end
+    print(" ")
+end
+
+-- Run each rule
+local function runRule(rule)
+    while true do
+        for _, dest in ipairs(rule.destinations) do
+            local destSize = peripheral.call(dest, "size") or 16
+            local destList = peripheral.call(dest, "list") or {}
+
+            local totalItems = 0
+            for _, item in pairs(destList) do
+                totalItems = totalItems + item.count
+            end
+
+            local maxItems = destSize * 64
+            local fullness = totalItems / maxItems
+
+            local trigger = rule.triggerThreshold or "empty"
+            local threshold = ({
+                empty = 0,
+                quarter = 0.25,
+                half = 0.5
+            })[trigger]
+
+            if fullness <= threshold then
+                local toSend = rule.restockAmount or (maxItems - totalItems)
+
+                for _, src in ipairs(rule.sources) do
+                    local srcItems = peripheral.call(src, "list") or {}
+                    for slot, item in pairs(srcItems) do
+                        if toSend <= 0 then break end
+                        local sendAmount = math.min(toSend, item.count)
+                        local sent = peripheral.call(src, "pushItems", dest, slot, sendAmount)
+                        toSend = toSend - sent
+                    end
+                    if toSend <= 0 then break end
+                end
+            end
+        end
+
+        sleep(config.settings.sleepTimer)
+    end
+end
+
+-- MAIN
+loadConfig()
+if #config.rules == 0 then configureRules() end
+displayRules()
+
+local tasks = {}
+for _, rule in ipairs(config.rules) do
+    table.insert(tasks, function() runRule(rule) end)
+end
+
+parallel.waitForAll(table.unpack(tasks))
